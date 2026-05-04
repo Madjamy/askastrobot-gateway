@@ -20,17 +20,18 @@ class Settings(BaseSettings):
     log_level: str = "info"
     port: int = 8003
 
-    # Supabase
-    supabase_url: str
-    supabase_anon_key: str
+    # Supabase (DB only — auth is direct Google OAuth, not via Supabase Auth)
     database_url: str
-    supabase_google_callback_url: str
 
     # OAuth provider creds we issue to ChatGPT
     oauth_client_id: str
     oauth_client_secret: str
     oauth_access_token_ttl: int = 2_592_000   # 30 days
     oauth_refresh_token_ttl: int = 7_776_000  # 90 days
+
+    # Google OAuth (we authenticate users with Google directly)
+    google_client_id: str
+    google_client_secret: str
 
     # Upgrade JWT
     gateway_jwt_secret: str

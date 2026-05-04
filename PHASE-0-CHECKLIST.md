@@ -135,32 +135,38 @@ nano .env    # paste in real values, save with Ctrl+X, Y, Enter
 ```
 
 You also need:
-- `SUPABASE_ANON_KEY` — from Supabase Dashboard → Settings → API → anon public
-- `DATABASE_URL` — from Supabase Dashboard → Settings → Database → Connection string (URI). Use the **Session pooler** URL on port 5432 (NOT 6543 — that's the transaction pooler which doesn't support advisory locks).
+- `DATABASE_URL` — from Supabase Dashboard → Settings → Database → Connection string (URI). Use the **Transaction pooler** URL on port 6543. The gateway uses transaction-scoped advisory locks, which work fine on the transaction pooler and are far more efficient than session-pooled connections under load.
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` — from step 6 below.
 
 ---
 
-## 6. Configure Supabase Google Auth  *(15 min)*
+## 6. Create the Google OAuth client  *(10 min)*
 
-### 6a. Google Cloud Console
+The gateway authenticates users directly with Google (no Supabase Auth in
+the flow). You need to create a Google OAuth 2.0 Web client.
 
-https://console.cloud.google.com/ — create or pick a project.
+https://console.cloud.google.com/apis/credentials — create or pick a project.
 
-- APIs & Services → OAuth consent screen → set up (External, app name "AskAstroBot", your email).
-- APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID → Web application.
-  - Name: "Supabase — AskAstroBot Gateway"
-  - **Authorised redirect URIs** (single):
-    `https://bdtzzykdhszmdlvpzlku.supabase.co/auth/v1/callback`
-- Save. Copy the **Client ID** and **Client secret** values.
-
-### 6b. Supabase
-
-Supabase Dashboard → Authentication → Providers → Google → Enable.
-- Paste Google Client ID and Client Secret.
-- Save.
-
-Authentication → URL Configuration → Redirect URLs → **Add**:
-`https://api.askastrobot.com/oauth/google-callback`
+1. **APIs & Services → OAuth consent screen** (one-time setup):
+   - User type: **External**
+   - App name: `AskAstroBot`
+   - User support email + developer email: your email
+   - Authorised domains: `askastrobot.com`
+   - Scopes: add `email`, `profile`, `openid` (the standard OIDC trio)
+   - Test users (while in "Testing" state): add your own Google account so you
+     can run end-to-end tests before publishing the OAuth screen.
+2. **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID:**
+   - Application type: **Web application**
+   - Name: `AskAstroBot Gateway`
+   - **Authorised redirect URIs** (single):
+     `https://api.askastrobot.com/oauth/google-callback`
+   - Click **Create**.
+3. **Copy** the Client ID and Client Secret. The bootstrap script will prompt
+   for both. They are stored only in the VPS `.env` (mode 600) and the
+   secret-output file `/root/.aab-gateway-secrets`.
+4. Once you've finished testing, return to the OAuth consent screen and click
+   **Publish app** to make sign-in available to anyone (not just test users).
+   Until then, only emails you've added as "Test users" can sign in.
 
 ---
 

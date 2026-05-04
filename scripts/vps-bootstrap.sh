@@ -5,20 +5,22 @@
 # Run this ONCE on the Hostinger VPS to deploy the gateway.
 # Safe to re-run; checks for existing state.
 #
-# Usage from Hostinger Web Console:
+# Usage from Hostinger Web Console (after the repo is public OR after
+# you have set up a deploy key on the VPS):
 #   curl -fsSL https://raw.githubusercontent.com/Madjamy/askastrobot-gateway/main/scripts/vps-bootstrap.sh | bash
-# OR paste this script directly.
 #
+# Secrets are written to /root/.aab-gateway-secrets (mode 600), NOT to stdout.
 # After this finishes:
 #   - Gateway runs at https://api.askastrobot.com (after DNS propagates)
-#   - You get an SSH deploy key printed at the end. Add the PRIVATE key as a
-#     GitHub Actions secret named VPS_SSH_PRIVATE_KEY so future pushes auto-deploy.
+#   - You will be told to `cat /root/.aab-gateway-secrets` and copy values into
+#     a password manager, then `shred` the file.
 # =====================================================================
 set -euo pipefail
 
 REPO_URL="https://github.com/Madjamy/askastrobot-gateway.git"
 INSTALL_DIR="/opt/askastrobot/gateway"
 ENV_FILE="$INSTALL_DIR/.env"
+SECRETS_OUT="/root/.aab-gateway-secrets"
 
 c_blue() { printf "\033[1;34m%s\033[0m\n" "$*"; }
 c_green() { printf "\033[1;32m%s\033[0m\n" "$*"; }
@@ -60,7 +62,7 @@ fi
 c_green "✓ Repo at $INSTALL_DIR"
 
 # ---------------------------------------------------------------------
-# 2. Build .env if missing
+# 2. Build .env if missing — secrets written ONLY to .env and SECRETS_OUT
 # ---------------------------------------------------------------------
 if [[ -f "$ENV_FILE" ]]; then
   c_yellow ".env already exists — leaving untouched"
@@ -75,30 +77,37 @@ else
   SHARED_SEC=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
   echo ""
-  c_yellow "I need two values from your Supabase Dashboard:"
-  echo "  https://supabase.com/dashboard/project/bdtzzykdhszmdlvpzlku/settings/api"
+  c_yellow "I need values from your Supabase + Google Cloud Console."
   echo ""
-  read -r -p "Paste SUPABASE_ANON_KEY (the anon public key): " SB_ANON
+  echo "Supabase:  https://supabase.com/dashboard/project/bdtzzykdhszmdlvpzlku/settings/api"
+  echo "  - Get DATABASE_URL from: Settings → Database → Connection string → URI"
+  echo "    Use the TRANSACTION POOLER (port 6543), not the session pooler."
   echo ""
-  echo "Get DATABASE_URL from:"
-  echo "  Settings → Database → Connection string → URI"
-  echo "  Use the SESSION POOLER (port 5432), NOT the transaction pooler (6543)."
   read -r -p "Paste DATABASE_URL: " SB_DBURL
+  echo ""
+  echo "Google Cloud Console: https://console.cloud.google.com/apis/credentials"
+  echo "  - Create OAuth 2.0 Client (Web application)"
+  echo "  - Authorised redirect URI: https://api.askastrobot.com/oauth/google-callback"
+  echo "  - Then paste Client ID + Secret below."
+  echo ""
+  read -r -p "Paste GOOGLE_CLIENT_ID: " GOOGLE_CID
+  read -r -s -p "Paste GOOGLE_CLIENT_SECRET (input hidden): " GOOGLE_CSEC
+  echo ""
 
   cat > "$ENV_FILE" <<ENVEOF
 ENVIRONMENT=production
 LOG_LEVEL=info
 PORT=8003
 
-SUPABASE_URL=https://bdtzzykdhszmdlvpzlku.supabase.co
-SUPABASE_ANON_KEY=$SB_ANON
 DATABASE_URL=$SB_DBURL
-SUPABASE_GOOGLE_CALLBACK_URL=https://api.askastrobot.com/oauth/google-callback
 
 OAUTH_CLIENT_ID=$OAUTH_CID
 OAUTH_CLIENT_SECRET=$OAUTH_CSEC
 OAUTH_ACCESS_TOKEN_TTL=2592000
 OAUTH_REFRESH_TOKEN_TTL=7776000
+
+GOOGLE_CLIENT_ID=$GOOGLE_CID
+GOOGLE_CLIENT_SECRET=$GOOGLE_CSEC
 
 GATEWAY_JWT_SECRET=$JWT_SECRET
 UPGRADE_TOKEN_TTL=900
@@ -119,60 +128,90 @@ ENVEOF
 
   chmod 600 "$ENV_FILE"
 
+  # Write secrets to a separate locked file the user reads ONCE then shreds.
+  cat > "$SECRETS_OUT" <<SECEOF
+# AskAstroBot Gateway secrets (generated $(date -Iseconds))
+# Save these into a password manager, then shred this file:
+#   shred -u $SECRETS_OUT
+
+OAUTH_CLIENT_ID         = $OAUTH_CID
+OAUTH_CLIENT_SECRET     = $OAUTH_CSEC
+GATEWAY_JWT_SECRET      = $JWT_SECRET
+GATEWAY_SHARED_SECRET   = $SHARED_SEC
+SECEOF
+  chmod 600 "$SECRETS_OUT"
+
   echo ""
-  c_green "✓ .env created with 4 freshly-generated secrets"
-  c_yellow "WRITE THESE DOWN — you'll need them for GPT Builder + Lovable:"
+  c_green "✓ .env created"
+  c_yellow "Secrets written to $SECRETS_OUT (mode 600)."
+  c_yellow "Run:   cat $SECRETS_OUT"
+  c_yellow "Save the values into a password manager, then:   shred -u $SECRETS_OUT"
   echo ""
-  echo "  OAUTH_CLIENT_ID:       $OAUTH_CID"
-  echo "  OAUTH_CLIENT_SECRET:   $OAUTH_CSEC"
-  echo "  GATEWAY_JWT_SECRET:    $JWT_SECRET"
-  echo "  GATEWAY_SHARED_SECRET: $SHARED_SEC"
-  echo ""
-  c_yellow "Press Enter once you've saved them in a password manager."
-  read -r _
 fi
 
 # ---------------------------------------------------------------------
-# 3. Build & start the container
+# 3. Build & start the container, with rollback on healthcheck failure
 # ---------------------------------------------------------------------
 c_blue "Building and starting aab-gateway container"
 cd "$INSTALL_DIR"
 
 # Tag any existing image as :previous for rollback safety
+HAD_PREVIOUS_IMAGE=0
 if docker image inspect aab-gateway:latest >/dev/null 2>&1; then
   docker tag aab-gateway:latest aab-gateway:previous
+  HAD_PREVIOUS_IMAGE=1
 fi
 
 GATEWAY_BUILD_VERSION="$(git rev-parse --short HEAD)" docker compose up -d --build
 
 # ---------------------------------------------------------------------
-# 4. Wait for health
+# 4. Wait for health; rollback if it fails
 # ---------------------------------------------------------------------
 c_blue "Waiting for gateway healthcheck"
+HEALTH_OK=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
   if curl -fsS http://localhost:8003/health >/dev/null 2>&1; then
     c_green "✓ Gateway is healthy on localhost:8003"
+    HEALTH_OK=1
     break
-  fi
-  if [[ $i -eq 10 ]]; then
-    c_red "Healthcheck failed after 10 retries. Check logs:"
-    docker logs aab-gateway --tail 50
-    exit 1
   fi
   sleep 3
 done
 
+if [[ $HEALTH_OK -eq 0 ]]; then
+  c_red "Healthcheck failed after 10 retries. Recent logs:"
+  docker logs aab-gateway --tail 80 || true
+
+  if [[ $HAD_PREVIOUS_IMAGE -eq 1 ]]; then
+    c_yellow "Rolling back to previous image"
+    docker compose down
+    docker tag aab-gateway:previous aab-gateway:latest
+    docker compose up -d
+    sleep 5
+    if curl -fsS http://localhost:8003/health >/dev/null 2>&1; then
+      c_green "✓ Rolled back; previous version is healthy"
+    else
+      c_red "Rollback also failed — manual intervention required"
+    fi
+  fi
+  exit 1
+fi
+
 # ---------------------------------------------------------------------
 # 5. Generate SSH deploy key for GitHub Actions (idempotent)
+#    Key is written to disk; not echoed to stdout.
 # ---------------------------------------------------------------------
 DEPLOY_KEY="/root/.ssh/aab_gateway_deploy"
 if [[ ! -f "$DEPLOY_KEY" ]]; then
   c_blue "Generating SSH deploy key"
   mkdir -p /root/.ssh
   chmod 700 /root/.ssh
-  ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -C "github-actions-aab-gateway" -N ""
-  cat "${DEPLOY_KEY}.pub" >> /root/.ssh/authorized_keys
-  chmod 600 /root/.ssh/authorized_keys
+  ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -C "github-actions-aab-gateway" -N "" -q
+  # Append public key to authorized_keys, dedupe.
+  if ! grep -qFf "${DEPLOY_KEY}.pub" /root/.ssh/authorized_keys 2>/dev/null; then
+    cat "${DEPLOY_KEY}.pub" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+  fi
 fi
 
 echo ""
@@ -180,31 +219,28 @@ c_green "=========================================="
 c_green "= Gateway deployed successfully           ="
 c_green "=========================================="
 echo ""
-c_yellow "Test public URL once DNS has propagated for api.askastrobot.com:"
+c_yellow "Test the public URL once DNS has propagated for api.askastrobot.com:"
 echo "  curl https://api.askastrobot.com/health"
 echo ""
 
 # ---------------------------------------------------------------------
-# 6. Print SSH deploy key for GitHub Actions
+# 6. SSH deploy key — instructions only, no key on stdout
 # ---------------------------------------------------------------------
-c_blue "=== ADD THESE TO GITHUB ACTIONS SECRETS ==="
+c_blue "=== NEXT: ADD GITHUB ACTIONS SECRETS ==="
 echo ""
 echo "Go to: https://github.com/Madjamy/askastrobot-gateway/settings/secrets/actions"
-echo "Add these 3 repository secrets (click 'New repository secret' each time):"
 echo ""
-echo "1. Name:  VPS_HOST"
-echo "   Value: 46.28.44.45"
+echo "Add these 3 repository secrets:"
+echo "  Name: VPS_HOST              Value: 46.28.44.45"
+echo "  Name: VPS_USER              Value: root"
+echo "  Name: VPS_SSH_PRIVATE_KEY   Value: <contents of $DEPLOY_KEY>"
 echo ""
-echo "2. Name:  VPS_USER"
-echo "   Value: root"
+echo "To copy the private key safely, run:"
+echo "  cat $DEPLOY_KEY"
 echo ""
-echo "3. Name:  VPS_SSH_PRIVATE_KEY"
-echo "   Value: (paste the BLOCK between BEGIN and END below, including those lines)"
+echo "Then paste the entire BEGIN/END block into the GitHub secret form."
 echo ""
-echo "----- BEGIN PRIVATE KEY BLOCK (copy from here) -----"
-cat "$DEPLOY_KEY"
-echo "----- END PRIVATE KEY BLOCK -----"
+c_yellow "Do not screenshot, log, or paste this key into chat. Use the GitHub secrets UI directly."
 echo ""
-c_yellow "Once those 3 secrets are saved, future 'git push' to main will auto-deploy."
-echo ""
-c_blue "Next: apply the Supabase migration → Dashboard → SQL Editor → paste migrations/0001_aab_gateway.sql → Run."
+c_blue "Next: apply the Supabase migration → Dashboard → SQL Editor → paste"
+echo "      migrations/0001_aab_gateway.sql → Run."

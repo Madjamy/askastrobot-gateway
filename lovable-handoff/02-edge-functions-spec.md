@@ -404,6 +404,20 @@ function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttr(s: string): string {
+  // Same as text escape; extra-conservative for href contexts.
+  return escapeHtml(s);
+}
+
 function welcomeHtml(args: {
   planLabel: string;
   amount_total: number;
@@ -414,23 +428,32 @@ function welcomeHtml(args: {
 }): string {
   const amount = (args.amount_total / 100).toFixed(2);
   const expiresFmt = new Date(args.expires_at).toUTCString();
+  // ALL interpolations into HTML must go through escapeHtml/escapeAttr.
+  // currency comes from Stripe; planLabel comes from our cap() helper.
+  // manage_url and chatgpt_url are server-controlled but escaped defensively.
+  const planLabel = escapeHtml(args.planLabel);
+  const currency = escapeHtml(args.currency);
+  const expires = escapeHtml(expiresFmt);
+  const amt = escapeHtml(amount);
+  const manageHref = escapeAttr(args.manage_url);
+  const chatHref = escapeAttr(args.chatgpt_url);
   return `
 <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
-  <h2 style="color:#7c3aed">Your ${args.planLabel} is active</h2>
+  <h2 style="color:#7c3aed">Your ${planLabel} is active</h2>
   <p>Thank you for upgrading. You can return to ChatGPT now and your bot will recognise you.</p>
   <table style="width:100%;border-collapse:collapse;margin:16px 0">
     <tr><td style="padding:8px;border-top:1px solid #eee"><b>Plan</b></td>
-        <td style="padding:8px;border-top:1px solid #eee">${args.planLabel}</td></tr>
+        <td style="padding:8px;border-top:1px solid #eee">${planLabel}</td></tr>
     <tr><td style="padding:8px;border-top:1px solid #eee"><b>Active until</b></td>
-        <td style="padding:8px;border-top:1px solid #eee">${expiresFmt}</td></tr>
+        <td style="padding:8px;border-top:1px solid #eee">${expires}</td></tr>
     <tr><td style="padding:8px;border-top:1px solid #eee;border-bottom:1px solid #eee"><b>Amount</b></td>
-        <td style="padding:8px;border-top:1px solid #eee;border-bottom:1px solid #eee">${args.currency} ${amount}</td></tr>
+        <td style="padding:8px;border-top:1px solid #eee;border-bottom:1px solid #eee">${currency} ${amt}</td></tr>
   </table>
   <p>
-    <a href="${args.chatgpt_url}" style="display:inline-block;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:6px">Return to ChatGPT</a>
+    <a href="${chatHref}" style="display:inline-block;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:6px">Return to ChatGPT</a>
   </p>
   <p style="margin-top:32px;font-size:14px;color:#555">
-    <b>Manage or cancel:</b> <a href="${args.manage_url}">Open subscription manager</a>
+    <b>Manage or cancel:</b> <a href="${manageHref}">Open subscription manager</a>
     (link valid for 24 hours).
     <br>
     If this link expires, open any AskAstroBot and ask <i>"manage my subscription"</i>

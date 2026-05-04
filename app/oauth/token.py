@@ -3,14 +3,17 @@
 Receives form-encoded body (NOT JSON — ChatGPT requirement).
 Supports grant_type=authorization_code and grant_type=refresh_token.
 Returns HTTP 401 on any failure (only 401 triggers ChatGPT silent re-auth).
+
+We bypass FastAPI's Form() validation (which would 422 on missing fields)
+and parse the body manually so EVERY failure mode returns 401.
 """
 from __future__ import annotations
 
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
 
-from fastapi import APIRouter, Form, HTTPException, status
+from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from app.db import get_pool
@@ -29,36 +32,53 @@ def _new_token() -> str:
     return secrets.token_urlsafe(48)
 
 
-def _401(detail: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+def _err(detail: str) -> JSONResponse:
+    """Return a 401 with no-store (RFC 6749 §5.1)."""
+    return JSONResponse(
+        {"error": detail},
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
 
 
 @router.post("/oauth/token")
-async def oauth_token(
-    grant_type: Annotated[str, Form()],
-    client_id: Annotated[str, Form()],
-    client_secret: Annotated[str, Form()],
-    code: Annotated[str | None, Form()] = None,
-    redirect_uri: Annotated[str | None, Form()] = None,
-    refresh_token: Annotated[str | None, Form()] = None,
-) -> JSONResponse:
+async def oauth_token(request: Request) -> JSONResponse:
     settings = get_settings()
 
-    if client_id != settings.oauth_client_id or client_secret != settings.oauth_client_secret:
+    # Manual form parse so all failures route through _err() → 401.
+    try:
+        form = await request.form()
+    except Exception:
+        return _err("invalid_request")
+
+    grant_type = form.get("grant_type") or ""
+    client_id = form.get("client_id") or ""
+    client_secret = form.get("client_secret") or ""
+
+    if not grant_type or not client_id or not client_secret:
+        return _err("invalid_request")
+
+    if (
+        not hmac.compare_digest(str(client_id), settings.oauth_client_id)
+        or not hmac.compare_digest(str(client_secret), settings.oauth_client_secret)
+    ):
         log.warning("oauth.token.bad_client_creds")
-        raise _401("invalid_client")
+        return _err("invalid_client")
 
     if grant_type == "authorization_code":
+        code = form.get("code") or ""
+        redirect_uri = form.get("redirect_uri") or ""
         if not code or not redirect_uri:
-            raise _401("invalid_request")
-        return await _exchange_code(code, redirect_uri)
+            return _err("invalid_request")
+        return await _exchange_code(str(code), str(redirect_uri))
 
     if grant_type == "refresh_token":
+        refresh_token = form.get("refresh_token") or ""
         if not refresh_token:
-            raise _401("invalid_request")
-        return await _refresh(refresh_token)
+            return _err("invalid_request")
+        return await _refresh(str(refresh_token))
 
-    raise _401("unsupported_grant_type")
+    return _err("unsupported_grant_type")
 
 
 async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
@@ -77,11 +97,11 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
                 code,
             )
             if row is None or row["used_at"] is not None:
-                raise _401("invalid_grant")
-            if row["redirect_uri"] != redirect_uri:
-                raise _401("redirect_uri_mismatch")
+                return _err("invalid_grant")
+            if not hmac.compare_digest(row["redirect_uri"], redirect_uri):
+                return _err("redirect_uri_mismatch")
             if row["expires_at"] < datetime.now(tz=timezone.utc):
-                raise _401("code_expired")
+                return _err("code_expired")
 
             await conn.execute(
                 "UPDATE public.gw_oauth_codes SET used_at = NOW() WHERE code = $1",
@@ -106,13 +126,16 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
             )
 
     log.info("oauth.token.minted", grant="authorization_code")
-    return JSONResponse({
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "refresh_token": refresh_token,
-        "expires_in": settings.oauth_access_token_ttl,
-        "scope": row["scope"] or "read:astro write:query",
-    })
+    return JSONResponse(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "refresh_token": refresh_token,
+            "expires_in": settings.oauth_access_token_ttl,
+            "scope": row["scope"] or "read:astro write:query",
+        },
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
 
 
 async def _refresh(presented_refresh: str) -> JSONResponse:
@@ -143,24 +166,28 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
                       JOIN public.gw_oauth_tokens t2 ON t2.access_token = t1.rotated_to
                      WHERE t1.refresh_token = $1
                        AND t1.revoked_at IS NOT NULL
-                       AND t1.revoked_at > NOW() - ($2 || ' seconds')::interval
+                       AND t1.revoked_at > NOW() - make_interval(secs => $2)
                        AND t2.revoked_at IS NULL
                     """,
-                    presented_refresh, str(_REFRESH_GRACE_SECONDS),
+                    presented_refresh, _REFRESH_GRACE_SECONDS,
                 )
                 if grace is None:
                     log.warning("oauth.refresh.invalid")
-                    raise _401("invalid_grant")
+                    return _err("invalid_grant")
                 # Idempotent retry: return the post-rotation pair.
-                return JSONResponse({
-                    "access_token": grace["access_token"],
-                    "token_type": "Bearer",
-                    "refresh_token": grace["refresh_token"],
-                    "expires_in": int(
-                        (grace["expires_at"] - datetime.now(tz=timezone.utc)).total_seconds()
-                    ),
-                    "scope": grace["scope"] or "read:astro write:query",
-                })
+                expires_in = int(
+                    (grace["expires_at"] - datetime.now(tz=timezone.utc)).total_seconds()
+                )
+                return JSONResponse(
+                    {
+                        "access_token": grace["access_token"],
+                        "token_type": "Bearer",
+                        "refresh_token": grace["refresh_token"],
+                        "expires_in": max(60, expires_in),
+                        "scope": grace["scope"] or "read:astro write:query",
+                    },
+                    headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+                )
 
             new_access = _new_token()
             new_refresh = _new_token()
@@ -182,10 +209,13 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
             )
 
     log.info("oauth.token.minted", grant="refresh_token")
-    return JSONResponse({
-        "access_token": new_access,
-        "token_type": "Bearer",
-        "refresh_token": new_refresh,
-        "expires_in": settings.oauth_access_token_ttl,
-        "scope": row["scope"] or "read:astro write:query",
-    })
+    return JSONResponse(
+        {
+            "access_token": new_access,
+            "token_type": "Bearer",
+            "refresh_token": new_refresh,
+            "expires_in": settings.oauth_access_token_ttl,
+            "scope": row["scope"] or "read:astro write:query",
+        },
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )

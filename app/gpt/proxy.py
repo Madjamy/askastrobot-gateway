@@ -1,15 +1,18 @@
-"""POST /v1/gpt/{bot_slug}/query — the main action endpoint for the Custom GPTs.
+"""POST /v1/gpt/{bot_slug}/query — main action endpoint for the Custom GPTs.
 
 Flow:
 1. Resolve user from bearer token (deps.require_bearer).
-2. Check active subscription. If active for this bot or 'all' → forward.
-3. Else atomic quota check + insert: if free count < 2, insert FALSE row, forward.
-   If >= 2, return paywall response (HTTP 200 with status: free_limit_reached).
-4. Forward to n8n with X-Gateway-Secret. On success, update n8n_response_ms.
-5. On n8n failure, delete the just-inserted query_log row + write to query_error_log + return 503.
+2. Active subscription check. If active for this bot or 'all' → forward.
+3. Else atomic quota check (per-(user, bot) advisory lock).
+   - If count >= 2: return paywall response (HTTP 200 with status: free_limit_reached).
+   - If count < 2: forward to n8n. ON SUCCESS, insert the gw_query_log row.
+   This ordering means a failed n8n call does NOT consume a free query and
+   never leaves a row to GC. Insert-on-success removes the C6 race entirely.
+4. n8n forward respects a 38-second deadline (45s ChatGPT cap minus 7s gateway budget).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -28,23 +31,22 @@ log = get_logger(__name__)
 
 VALID_BOTS = {"prashna", "horoscope", "career", "marriage"}
 
-# In-chat intent words that should not consume a query — they should return
-# an upgrade-management link instead.
-_PORTAL_INTENT_WORDS = (
-    "manage_subscription",
-    "cancel_subscription",
-    "manage my subscription",
-    "cancel my subscription",
-    "manage subscription",
-    "cancel subscription",
-)
+# Total budget for the entire endpoint, leaving headroom under ChatGPT's 45s cap.
+_TOTAL_DEADLINE_SECONDS = 38.0
+
+# Structured intent: ChatGPT sends one of these in query_type to invoke
+# the subscription-management flow without a substring match against query_text.
+_PORTAL_INTENT_QUERY_TYPES = {"subscription", "manage_subscription", "cancel_subscription"}
 
 
 def _has_portal_intent(query_text: str | None, query_type: str | None) -> bool:
-    if not query_text and not query_type:
-        return False
-    haystack = " ".join(s for s in (query_text or "", query_type or "") if s).lower()
-    return any(word in haystack for word in _PORTAL_INTENT_WORDS)
+    if query_type and query_type.strip().lower() in _PORTAL_INTENT_QUERY_TYPES:
+        return True
+    # Exact, full-text match on a structured sentinel passed by the bot's
+    # system prompt (not a substring search — see I3 fix).
+    if query_text and query_text.strip().lower() == "manage_subscription":
+        return True
+    return False
 
 
 @router.post("/v1/gpt/{bot_slug}/query")
@@ -60,11 +62,12 @@ async def gpt_query(
     raw_body = await request.body()
     content_type = request.headers.get("content-type", "application/json")
 
-    # Best-effort parse for logging + portal intent detection.
     parsed: dict[str, Any] = {}
     if raw_body:
         try:
             parsed = json.loads(raw_body)
+            if not isinstance(parsed, dict):
+                parsed = {}
         except json.JSONDecodeError:
             parsed = {}
 
@@ -96,62 +99,49 @@ async def gpt_query(
 
     pool = get_pool()
 
-    # ---------- Active-sub check ---------- #
-    async with pool.acquire() as conn:
-        active_sub = await conn.fetchval(
-            """
-            SELECT 1 FROM public.gw_subscriptions
-             WHERE user_id = $1
-               AND status = 'active'
-               AND expires_at > NOW()
-               AND bot_slug IN ($2, 'all')
-             LIMIT 1
-            """,
-            user.user_id, bot_slug,
-        )
-
-    if active_sub:
-        return await _forward_and_log(
-            user=user, bot_slug=bot_slug, raw_body=raw_body, content_type=content_type,
-            parsed=parsed, query_text=query_text, query_type=query_type, was_paid=True,
-        )
-
-    # ---------- Atomic quota check + insert ---------- #
+    # ---------- Combined active-sub + quota check in one transaction ---------- #
+    # Holding the per-(user, bot) advisory lock from sub-check through quota
+    # decision means a sub that expires mid-flight cannot let a query slip
+    # through the wrong path.
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Per-(user, bot) advisory lock — serialises concurrent requests.
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtext($1))",
                 f"{user.user_id}:{bot_slug}",
             )
-            allowed_log_id = await conn.fetchval(
+
+            active_sub = await conn.fetchval(
                 """
-                WITH quota AS (
-                  SELECT COUNT(*) AS used
-                    FROM public.gw_query_log
-                   WHERE user_id = $1
-                     AND bot_slug = $2
-                     AND was_paid_query = FALSE
-                     AND created_at > NOW() - INTERVAL '24 hours'
-                ),
-                ins AS (
-                  INSERT INTO public.gw_query_log
-                      (user_id, email, bot_slug, query_text, query_type, birth_details_json, was_paid_query)
-                  SELECT $1, $3, $2, $4, $5, $6::jsonb, FALSE
-                  WHERE (SELECT used FROM quota) < 2
-                  RETURNING id
-                )
-                SELECT (SELECT id FROM ins)
+                SELECT 1 FROM public.gw_subscriptions
+                 WHERE user_id = $1
+                   AND status = 'active'
+                   AND expires_at > NOW()
+                   AND bot_slug IN ($2, 'all')
+                 LIMIT 1
                 """,
-                user.user_id,
-                bot_slug,
-                user.email,
-                query_text,
-                query_type,
-                json.dumps(parsed) if parsed else None,
+                user.user_id, bot_slug,
             )
 
-    if allowed_log_id is None:
+            if active_sub:
+                was_paid = True
+                allowed = True
+            else:
+                used = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                      FROM public.gw_query_log
+                     WHERE user_id = $1
+                       AND bot_slug = $2
+                       AND was_paid_query = FALSE
+                       AND created_at > NOW() - INTERVAL '24 hours'
+                    """,
+                    user.user_id, bot_slug,
+                )
+                was_paid = False
+                allowed = (used or 0) < 2
+
+    # ---------- Paywall: not allowed, not subscribed ---------- #
+    if not allowed:
         upgrade_token = mint_upgrade_token(
             user_id=user.user_id,
             email=user.email,
@@ -178,73 +168,74 @@ async def gpt_query(
             ),
         })
 
-    # ---------- Allowed: forward to n8n. On failure, delete the log row. ---------- #
-    return await _forward_and_log(
-        user=user, bot_slug=bot_slug, raw_body=raw_body, content_type=content_type,
-        parsed=parsed, query_text=query_text, query_type=query_type, was_paid=False,
-        log_row_id=allowed_log_id,
-    )
-
-
-async def _forward_and_log(
-    *,
-    user: CurrentUser,
-    bot_slug: str,
-    raw_body: bytes,
-    content_type: str,
-    parsed: dict[str, Any],
-    query_text: str | None,
-    query_type: str | None,
-    was_paid: bool,
-    log_row_id: int | None = None,
-) -> Response:
-    pool = get_pool()
+    # ---------- Forward to n8n with a deadline; insert log ON SUCCESS only ---------- #
     try:
-        body_out, ct_out, elapsed_ms = await forward_to_n8n(bot_slug, raw_body, content_type)
+        body_out, ct_out, elapsed_ms = await asyncio.wait_for(
+            forward_to_n8n(bot_slug, raw_body, content_type),
+            timeout=_TOTAL_DEADLINE_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        log.error("gpt.deadline_exceeded", user_id=user.user_id, bot_slug=bot_slug)
+        await _log_error(
+            user_id=user.user_id, bot_slug=bot_slug,
+            error_type="deadline", error_message="gateway deadline exceeded",
+            parsed=parsed,
+        )
+        return _upstream_unavailable()
     except N8nForwardError as exc:
-        # Failed query — clean up the placeholder row (free-tier path),
-        # log the error, and return 503.
-        async with pool.acquire() as conn:
-            if log_row_id is not None and not was_paid:
-                await conn.execute("DELETE FROM public.gw_query_log WHERE id = $1", log_row_id)
-            await conn.execute(
-                """
-                INSERT INTO public.gw_query_error_log
-                    (user_id, bot_slug, error_type, error_message, request_body)
-                VALUES ($1, $2, $3, $4, $5::jsonb)
-                """,
-                user.user_id, bot_slug, exc.kind, str(exc),
-                json.dumps(parsed) if parsed else None,
-            )
-        return JSONResponse(
-            {
-                "status": "upstream_unavailable",
-                "message": "Astrology engine is temporarily unavailable. Please try again in a moment.",
-            },
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        await _log_error(
+            user_id=user.user_id, bot_slug=bot_slug,
+            error_type=exc.kind, error_message=str(exc),
+            parsed=parsed,
+        )
+        return _upstream_unavailable()
+
+    # n8n succeeded — record the query.
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.gw_query_log
+                (user_id, email, bot_slug, query_text, query_type,
+                 birth_details_json, n8n_response_ms, was_paid_query)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+            """,
+            user.user_id, user.email, bot_slug, query_text, query_type,
+            json.dumps(parsed) if isinstance(parsed, dict) else None,
+            elapsed_ms, was_paid,
         )
 
-    # Successful — update log row with response time. For paid queries the row
-    # didn't exist yet (we skipped the quota CTE). Insert it now.
-    async with pool.acquire() as conn:
-        if log_row_id is not None:
-            await conn.execute(
-                "UPDATE public.gw_query_log SET n8n_response_ms = $1 WHERE id = $2",
-                elapsed_ms, log_row_id,
-            )
-        else:
-            await conn.execute(
-                """
-                INSERT INTO public.gw_query_log
-                    (user_id, email, bot_slug, query_text, query_type,
-                     birth_details_json, n8n_response_ms, was_paid_query)
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
-                """,
-                user.user_id, user.email, bot_slug, query_text, query_type,
-                json.dumps(parsed) if parsed else None, elapsed_ms, was_paid,
-            )
-
     return Response(content=body_out, media_type=ct_out, status_code=status.HTTP_200_OK)
+
+
+async def _log_error(
+    *,
+    user_id: str,
+    bot_slug: str,
+    error_type: str,
+    error_message: str,
+    parsed: dict[str, Any],
+) -> None:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.gw_query_error_log
+                (user_id, bot_slug, error_type, error_message, request_body)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+            """,
+            user_id, bot_slug, error_type, error_message[:500],
+            json.dumps(parsed) if isinstance(parsed, dict) else None,
+        )
+
+
+def _upstream_unavailable() -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "upstream_unavailable",
+            "message": "Astrology engine is temporarily unavailable. Please try again in a moment.",
+        },
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
 
 
 def _pricing_options(bot_slug: str) -> list[dict[str, Any]]:

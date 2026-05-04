@@ -4,13 +4,12 @@ from __future__ import annotations
 import os
 
 # Set required env vars BEFORE importing the app, so pydantic-settings picks them up.
-os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
-os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("DATABASE_URL", "postgres://test:test@localhost:5432/test")
-os.environ.setdefault("SUPABASE_GOOGLE_CALLBACK_URL", "https://api.askastrobot.com/oauth/google-callback")
 
 os.environ.setdefault("OAUTH_CLIENT_ID", "test-client-id")
 os.environ.setdefault("OAUTH_CLIENT_SECRET", "test-client-secret")
+os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client-id")
+os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-client-secret")
 os.environ.setdefault("GATEWAY_JWT_SECRET", "0" * 64)
 
 os.environ.setdefault("N8N_WEBHOOK_PRASHNA",   "https://app.askastrobot.com/webhook/test-prashna")
