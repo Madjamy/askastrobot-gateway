@@ -15,16 +15,13 @@ SUPABASE_SERVICE_ROLE_KEY=<from Supabase dashboard - Settings - API>
 STRIPE_SECRET_KEY=<sk_live_... from Stripe dashboard>
 STRIPE_WEBHOOK_SECRET=<whsec_... from the webhook endpoint you created>
 
-# Stripe price IDs — fill in after running 03-stripe-dashboard-checklist.md
-PRICE_DAY_PASS_PRASHNA=
-PRICE_DAY_PASS_HOROSCOPE=
-PRICE_DAY_PASS_CAREER=
-PRICE_DAY_PASS_MARRIAGE=
-PRICE_MONTHLY_PRASHNA=
-PRICE_MONTHLY_HOROSCOPE=
-PRICE_MONTHLY_CAREER=
-PRICE_MONTHLY_MARRIAGE=
-PRICE_MASTER_MONTHLY=
+# Stripe PRODUCT IDs (Edge Function looks up active prices at runtime)
+PRODUCT_DAY_PASS=prod_SbCD46RqUYiCYc
+PRODUCT_PRASHNA=prod_SaqKZkw2DCqHJu
+PRODUCT_HOROSCOPE=prod_SbBgZDHE6SmidW
+PRODUCT_CAREER=prod_UF3hZGPaITxMaR
+PRODUCT_MARRIAGE=prod_SbBjFDchcsRfZn
+PRODUCT_MASTER=                                # ← create in Stripe Dashboard, fill in
 
 # Resend (already in your stack — same key the kundali pipeline uses)
 RESEND_API_KEY=re_...

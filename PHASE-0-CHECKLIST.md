@@ -206,26 +206,24 @@ curl https://api.askastrobot.com/health
 
 ---
 
-## 9. Stripe setup  *(20 min — can run in parallel with steps 1-8)*
+## 9. Stripe setup  *(15 min — can run in parallel with steps 1-8)*
 
-Open `lovable-handoff/03-stripe-dashboard-checklist.md` and follow it
-exactly. At the end you'll have:
+Open `lovable-handoff/03-stripe-dashboard-checklist.md` and follow it. The
+Edge Function uses **product IDs** and looks up active prices at runtime
+(matching your existing Lovable pattern), so you don't need to send price IDs.
 
-- 9 `price_*` IDs (see note below about the products you sent)
-- A webhook signing secret (`whsec_...`) — but the URL doesn't exist yet,
-  so create the webhook endpoint **after** the Lovable Edge Functions are deployed.
-- Your Stripe secret key (`sk_*`)
+You already sent 5 product IDs. What you need to do:
 
-Save these for the Lovable hand-off.
+1. **For each existing product**, confirm one active price at the rate above
+   (open the product in Dashboard → Prices). If a price is missing, add it.
+2. **Create the missing Master product**: `AskAstroBot — Master (all 4 bots)`,
+   $12.99 USD recurring monthly. Send me the new `prod_*` ID.
+3. **Customer emails:** Settings → enable receipts.
+4. **Customer Portal:** Settings → enable, set "Cancel at end of period",
+   enable "Login link".
+5. **API key:** copy the secret key (`sk_*`).
 
-> ⚠️ **About the products you sent me:** you sent **product IDs**
-> (`prod_SaqK...` etc.) but Stripe Checkout needs **price IDs**
-> (`price_*`). For each of the 4 bot products, create a monthly price at
-> the right rate ($7.99 for Prashna/Horoscope, $5.99 for Career/Marriage).
-> For the universal Day Pass product, create 4 one-time prices of $2.99
-> (one per bot) so per-bot reporting stays clean. Then create a NEW
-> product "AskAstroBot — Master (all 4 bots)" with a $12.99/mo price.
-> Send all 9 `price_*` IDs back to me.
+Webhook endpoint creation comes later (after Lovable deploys the Edge Function).
 
 ---
 

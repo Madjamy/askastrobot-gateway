@@ -52,17 +52,38 @@ const supabase = createClient(
 const GATEWAY_BASE_URL = Deno.env.get("GATEWAY_BASE_URL")!;
 const GATEWAY_SHARED_SECRET = Deno.env.get("GATEWAY_SHARED_SECRET")!;
 
-const PRICES: Record<string, string> = {
-  "day_pass:prashna":   Deno.env.get("PRICE_DAY_PASS_PRASHNA")!,
-  "day_pass:horoscope": Deno.env.get("PRICE_DAY_PASS_HOROSCOPE")!,
-  "day_pass:career":    Deno.env.get("PRICE_DAY_PASS_CAREER")!,
-  "day_pass:marriage":  Deno.env.get("PRICE_DAY_PASS_MARRIAGE")!,
-  "monthly:prashna":    Deno.env.get("PRICE_MONTHLY_PRASHNA")!,
-  "monthly:horoscope":  Deno.env.get("PRICE_MONTHLY_HOROSCOPE")!,
-  "monthly:career":     Deno.env.get("PRICE_MONTHLY_CAREER")!,
-  "monthly:marriage":   Deno.env.get("PRICE_MONTHLY_MARRIAGE")!,
-  "master:all":         Deno.env.get("PRICE_MASTER_MONTHLY")!,
+// Map (plan, bot_slug) -> Stripe Product ID. Each product has its prices
+// configured in the Stripe Dashboard; we look up the active price at runtime.
+// This matches the existing Lovable pattern of passing product IDs.
+const PRODUCTS: Record<string, string> = {
+  "day_pass:prashna":   Deno.env.get("PRODUCT_DAY_PASS")!,   // same product, all bots
+  "day_pass:horoscope": Deno.env.get("PRODUCT_DAY_PASS")!,
+  "day_pass:career":    Deno.env.get("PRODUCT_DAY_PASS")!,
+  "day_pass:marriage":  Deno.env.get("PRODUCT_DAY_PASS")!,
+  "monthly:prashna":    Deno.env.get("PRODUCT_PRASHNA")!,
+  "monthly:horoscope":  Deno.env.get("PRODUCT_HOROSCOPE")!,
+  "monthly:career":     Deno.env.get("PRODUCT_CAREER")!,
+  "monthly:marriage":   Deno.env.get("PRODUCT_MARRIAGE")!,
+  "master:all":         Deno.env.get("PRODUCT_MASTER")!,
 };
+
+async function resolvePriceId(productId: string, expectedRecurring: boolean): Promise<string> {
+  const prices = await stripe.prices.list({
+    product: productId,
+    active: true,
+    limit: 10,
+  });
+  // Filter by type. Day passes are one-time; monthly/master are recurring.
+  const match = prices.data.find((p) =>
+    expectedRecurring ? p.recurring !== null : p.recurring === null
+  );
+  if (!match) {
+    throw new Error(
+      `No active ${expectedRecurring ? "recurring" : "one-time"} price for product ${productId}`
+    );
+  }
+  return match.id;
+}
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -110,10 +131,12 @@ Deno.serve(async (req) => {
       .eq("id", user.id);
   }
 
-  // 3. Look up the price ID.
-  const priceKey = plan === "master" ? "master:all" : `${plan}:${bot_slug}`;
-  const priceId = PRICES[priceKey];
-  if (!priceId) return json({ error: "price_not_configured", priceKey }, 500);
+  // 3. Resolve product ID -> active price ID at runtime.
+  const productKey = plan === "master" ? "master:all" : `${plan}:${bot_slug}`;
+  const productId = PRODUCTS[productKey];
+  if (!productId) return json({ error: "product_not_configured", productKey }, 500);
+
+  const priceId = await resolvePriceId(productId, plan !== "day_pass");
 
   // 4. Create the Checkout Session.
   const session = await stripe.checkout.sessions.create({
