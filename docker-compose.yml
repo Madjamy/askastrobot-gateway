@@ -1,0 +1,31 @@
+services:
+  aab-gateway:
+    build:
+      context: .
+      args:
+        GATEWAY_BUILD_VERSION: ${GATEWAY_BUILD_VERSION:-dev}
+    image: aab-gateway:latest
+    container_name: aab-gateway
+    restart: unless-stopped
+    networks:
+      - root_default
+    env_file:
+      - .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      - "traefik.http.routers.aab-gateway.rule=Host(`api.askastrobot.com`)"
+      - "traefik.http.routers.aab-gateway.entrypoints=websecure"
+      - "traefik.http.routers.aab-gateway.tls=true"
+      - "traefik.http.routers.aab-gateway.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.aab-gateway.loadbalancer.server.port=8003"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  root_default:
+    external: true

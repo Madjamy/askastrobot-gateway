@@ -1,0 +1,71 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install + run tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+          # Tests are unit-only by default; integration tests gated on env vars.
+          pytest -q tests/ -k "not integration"
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Add VPS to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          GATEWAY_BUILD_VERSION: ${{ github.sha }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_HOST <<EOF
+            set -e
+            cd /opt/askastrobot/gateway
+            git fetch origin main
+            git reset --hard origin/main
+            # Tag the running image as :previous for fast rollback.
+            docker image tag aab-gateway:latest aab-gateway:previous 2>/dev/null || true
+            export GATEWAY_BUILD_VERSION=$GATEWAY_BUILD_VERSION
+            docker compose up -d --build
+            sleep 5
+            curl -fsS http://localhost:8003/health || (echo "healthcheck failed"; docker compose logs --tail=100; exit 1)
+          EOF
+
+      - name: Smoke test public URL
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS https://api.askastrobot.com/health; then
+              echo "PASS"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Public health check failed after 5 retries"
+          exit 1
