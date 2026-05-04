@@ -1,45 +1,78 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "AskAstroBot — Horoscope Analysis",
-    "version": "v2.0.0",
-    "description": "Sends a birth-chart interpretation query to the AskAstroBot gateway."
+    "title": "AskAstroBot \u2014 Horoscope Analysis",
+    "version": "v2.0.0"
   },
   "servers": [
-    { "url": "https://api.askastrobot.com" }
+    {
+      "url": "https://api.askastrobot.com"
+    }
   ],
   "paths": {
     "/v1/gpt/horoscope/query": {
       "post": {
         "operationId": "sendHoroscopeQuery",
-        "summary": "Send a birth-chart analysis query",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["year","month","day","hours","minutes","latitude","longitude","timezone","query_text"],
+                "required": [
+                  "year",
+                  "month",
+                  "day",
+                  "hours",
+                  "minutes",
+                  "latitude",
+                  "longitude",
+                  "timezone",
+                  "query_text"
+                ],
                 "properties": {
-                  "year":      {"type":"integer", "description":"Year of birth"},
-                  "month":     {"type":"integer", "minimum":1, "maximum":12},
-                  "day":       {"type":"integer", "minimum":1, "maximum":31},
-                  "hours":     {"type":"integer", "minimum":0, "maximum":23},
-                  "minutes":   {"type":"integer", "minimum":0, "maximum":59},
-                  "latitude":  {"type":"number"},
-                  "longitude": {"type":"number"},
-                  "timezone":  {"type":"number"},
-                  "query_type":{"type":"string"},
-                  "query_text":{"type":"string"}
+                  "year": {
+                    "type": "integer"
+                  },
+                  "month": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                  },
+                  "day": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                  },
+                  "hours": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  },
+                  "minutes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 59
+                  },
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "timezone": {
+                    "type": "number"
+                  },
+                  "query_type": {
+                    "type": "string"
+                  },
+                  "query_text": {
+                    "type": "string"
+                  }
                 }
               }
             }
           }
-        },
-        "responses": {
-          "200": { "description": "Astro context, paywall response, or management response." },
-          "401": { "description": "Missing/invalid bearer — ChatGPT silently re-auths." },
-          "503": { "description": "Astro engine temporarily unavailable." }
         }
       }
     }
