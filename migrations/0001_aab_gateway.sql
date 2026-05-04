@@ -1,5 +1,8 @@
 -- ====================================================================
 -- AskAstroBot Gateway - migration 0001
+-- All tables prefixed with gw_ so the gateway owns its own namespace
+-- and the existing public.users table (100+ web users) is untouched.
+--
 -- Idempotent. Apply via Supabase Dashboard -> SQL Editor.
 -- Project: bdtzzykdhszmdlvpzlku.supabase.co
 -- ====================================================================
@@ -7,20 +10,26 @@
 BEGIN;
 
 -- --------------------------------------------------------------------
--- 1. Extend users table
+-- 1. Gateway-owned users (separate from public.users, NEVER touched)
 -- --------------------------------------------------------------------
-ALTER TABLE public.users
-  ADD COLUMN IF NOT EXISTS google_id           TEXT UNIQUE,
-  ADD COLUMN IF NOT EXISTS signup_source       TEXT DEFAULT 'web',
-  ADD COLUMN IF NOT EXISTS last_seen_at        TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS stripe_customer_id  TEXT UNIQUE;
+CREATE TABLE IF NOT EXISTS public.gw_users (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email               TEXT UNIQUE NOT NULL,
+  google_id           TEXT UNIQUE,
+  name                TEXT,
+  signup_source       TEXT NOT NULL DEFAULT 'gpt',
+  stripe_customer_id  TEXT UNIQUE,
+  last_seen_at        TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX IF NOT EXISTS idx_users_google_id ON public.users(google_id);
+CREATE INDEX IF NOT EXISTS idx_gw_users_google_id ON public.gw_users(google_id);
+CREATE INDEX IF NOT EXISTS idx_gw_users_email     ON public.gw_users(email);
 
 -- --------------------------------------------------------------------
 -- 2. OAuth provider state
 -- --------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.oauth_authz_session (
+CREATE TABLE IF NOT EXISTS public.gw_oauth_authz_session (
   state           TEXT PRIMARY KEY,
   client_id       TEXT NOT NULL,
   redirect_uri    TEXT NOT NULL,
@@ -30,9 +39,9 @@ CREATE TABLE IF NOT EXISTS public.oauth_authz_session (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.oauth_codes (
+CREATE TABLE IF NOT EXISTS public.gw_oauth_codes (
   code          TEXT PRIMARY KEY,
-  user_id       UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  user_id       UUID NOT NULL REFERENCES public.gw_users(id) ON DELETE CASCADE,
   redirect_uri  TEXT NOT NULL,
   scope         TEXT,
   expires_at    TIMESTAMPTZ NOT NULL,
@@ -40,29 +49,29 @@ CREATE TABLE IF NOT EXISTS public.oauth_codes (
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.oauth_tokens (
+CREATE TABLE IF NOT EXISTS public.gw_oauth_tokens (
   access_token         TEXT PRIMARY KEY,
   refresh_token        TEXT UNIQUE NOT NULL,
-  user_id              UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  user_id              UUID NOT NULL REFERENCES public.gw_users(id) ON DELETE CASCADE,
   expires_at           TIMESTAMPTZ NOT NULL,
   refresh_expires_at   TIMESTAMPTZ NOT NULL,
   scope                TEXT DEFAULT 'read:astro write:query',
   created_at           TIMESTAMPTZ DEFAULT NOW(),
   revoked_at           TIMESTAMPTZ,
-  rotated_to           TEXT  -- access_token of the row that replaced this one (for 30s grace)
+  rotated_to           TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user
-  ON public.oauth_tokens(user_id) WHERE revoked_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh_active
-  ON public.oauth_tokens(refresh_token) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_gw_oauth_tokens_user
+  ON public.gw_oauth_tokens(user_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_gw_oauth_tokens_refresh_active
+  ON public.gw_oauth_tokens(refresh_token) WHERE revoked_at IS NULL;
 
 -- --------------------------------------------------------------------
 -- 3. Query logs (per-bot, used for quota + analytics)
 -- --------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.query_log (
+CREATE TABLE IF NOT EXISTS public.gw_query_log (
   id                  BIGSERIAL PRIMARY KEY,
-  user_id             UUID NOT NULL REFERENCES public.users(id),
+  user_id             UUID NOT NULL REFERENCES public.gw_users(id),
   email               TEXT NOT NULL,
   bot_slug            TEXT NOT NULL CHECK (bot_slug IN ('prashna','horoscope','career','marriage')),
   query_text          TEXT,
@@ -73,14 +82,14 @@ CREATE TABLE IF NOT EXISTS public.query_log (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_query_log_quota
-  ON public.query_log(user_id, bot_slug, created_at DESC)
+CREATE INDEX IF NOT EXISTS idx_gw_query_log_quota
+  ON public.gw_query_log(user_id, bot_slug, created_at DESC)
   WHERE was_paid_query = FALSE;
 
-CREATE INDEX IF NOT EXISTS idx_query_log_user_created
-  ON public.query_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gw_query_log_user_created
+  ON public.gw_query_log(user_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS public.query_error_log (
+CREATE TABLE IF NOT EXISTS public.gw_query_error_log (
   id              BIGSERIAL PRIMARY KEY,
   user_id         UUID,
   bot_slug        TEXT,
@@ -93,9 +102,9 @@ CREATE TABLE IF NOT EXISTS public.query_error_log (
 -- --------------------------------------------------------------------
 -- 4. Subscriptions (the contract between gateway + website Edge Functions)
 -- --------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.subscriptions (
+CREATE TABLE IF NOT EXISTS public.gw_subscriptions (
   id                              BIGSERIAL PRIMARY KEY,
-  user_id                         UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  user_id                         UUID NOT NULL REFERENCES public.gw_users(id) ON DELETE CASCADE,
   plan                            TEXT NOT NULL CHECK (plan IN ('day_pass','monthly','master')),
   bot_slug                        TEXT NOT NULL CHECK (bot_slug IN ('prashna','horoscope','career','marriage','all')),
   status                          TEXT NOT NULL CHECK (status IN ('active','cancelled','past_due','expired')),
@@ -108,18 +117,17 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   updated_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Hot-path active-sub lookup (used on every gateway call)
-CREATE INDEX IF NOT EXISTS idx_subs_active_lookup
-  ON public.subscriptions(user_id, bot_slug, expires_at)
+CREATE INDEX IF NOT EXISTS idx_gw_subs_active_lookup
+  ON public.gw_subscriptions(user_id, bot_slug, expires_at)
   WHERE status = 'active';
 
-CREATE INDEX IF NOT EXISTS idx_subs_user_history
-  ON public.subscriptions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gw_subs_user_history
+  ON public.gw_subscriptions(user_id, created_at DESC);
 
 -- --------------------------------------------------------------------
 -- 5. Stripe webhook idempotency log (written by website Edge Function)
 -- --------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.stripe_webhook_log (
+CREATE TABLE IF NOT EXISTS public.gw_stripe_webhook_log (
   id              BIGSERIAL PRIMARY KEY,
   event_id        TEXT UNIQUE NOT NULL,
   event_type      TEXT NOT NULL,
@@ -130,15 +138,15 @@ CREATE TABLE IF NOT EXISTS public.stripe_webhook_log (
   error_message   TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_stripe_webhook_log_event
-  ON public.stripe_webhook_log(event_id);
+CREATE INDEX IF NOT EXISTS idx_gw_stripe_webhook_log_event
+  ON public.gw_stripe_webhook_log(event_id);
 
 -- --------------------------------------------------------------------
 -- 6. Email send log (written by website Edge Function via Resend)
 -- --------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.email_send_log (
+CREATE TABLE IF NOT EXISTS public.gw_email_send_log (
   id              BIGSERIAL PRIMARY KEY,
-  user_id         UUID REFERENCES public.users(id),
+  user_id         UUID REFERENCES public.gw_users(id),
   to_email        TEXT NOT NULL,
   template        TEXT NOT NULL,
   resend_id       TEXT,
@@ -150,7 +158,7 @@ CREATE TABLE IF NOT EXISTS public.email_send_log (
 -- --------------------------------------------------------------------
 -- 7. updated_at trigger for subscriptions
 -- --------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.tg_subscriptions_updated_at()
+CREATE OR REPLACE FUNCTION public.gw_tg_subscriptions_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = NOW();
@@ -158,18 +166,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS subscriptions_updated_at ON public.subscriptions;
-CREATE TRIGGER subscriptions_updated_at
-  BEFORE UPDATE ON public.subscriptions
-  FOR EACH ROW EXECUTE FUNCTION public.tg_subscriptions_updated_at();
-
--- --------------------------------------------------------------------
--- 8. Retention: free-tier query logs older than 90 days (privacy)
--- --------------------------------------------------------------------
--- Run manually in SQL editor monthly, or schedule with pg_cron if available.
--- (Paid queries kept indefinitely for revenue analytics.)
--- DELETE FROM public.query_log
---   WHERE was_paid_query = FALSE
---     AND created_at < NOW() - INTERVAL '90 days';
+DROP TRIGGER IF EXISTS gw_subscriptions_updated_at ON public.gw_subscriptions;
+CREATE TRIGGER gw_subscriptions_updated_at
+  BEFORE UPDATE ON public.gw_subscriptions
+  FOR EACH ROW EXECUTE FUNCTION public.gw_tg_subscriptions_updated_at();
 
 COMMIT;

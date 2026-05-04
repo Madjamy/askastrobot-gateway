@@ -128,9 +128,9 @@ Logs are JSON; pipe through `jq` for readability.
 
 ```sql
 -- Force user back to free tier immediately:
-UPDATE oauth_tokens   SET revoked_at = NOW()
+UPDATE gw_oauth_tokens   SET revoked_at = NOW()
   WHERE user_id = '<uuid>' AND revoked_at IS NULL;
-UPDATE subscriptions  SET status = 'cancelled', expires_at = NOW()
+UPDATE gw_subscriptions  SET status = 'cancelled', expires_at = NOW()
   WHERE user_id = '<uuid>' AND status = 'active';
 ```
 

@@ -116,7 +116,7 @@ Stripe Checkout (hosted)  →  user pays  →  redirects to /upgrade/success
 Supabase Edge Function: stripe-webhook
     Receives checkout.session.completed / customer.subscription.* events
     Verifies Stripe signature
-    Upserts public.subscriptions row keyed by metadata.user_id
+    Upserts public.gw_subscriptions row keyed by metadata.user_id
     Logs in stripe_webhook_log
 ```
 
@@ -229,7 +229,7 @@ Two grant types:
 - On any failure (bad client creds, unknown refresh, expired, revoked) → **HTTP 401**. Never 400/403 — only 401 triggers ChatGPT's silent re-auth.
 - **Atomic rotation** (race-safe):
   ```sql
-  UPDATE oauth_tokens
+  UPDATE gw_oauth_tokens
      SET revoked_at = NOW()
    WHERE refresh_token = $1
      AND revoked_at IS NULL
@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS stripe_webhook_log (
 **Active sub check (gateway hot path):**
 
 ```sql
-SELECT 1 FROM subscriptions
+SELECT 1 FROM gw_subscriptions
 WHERE user_id = $1
   AND status = 'active'
   AND expires_at > NOW()
@@ -376,7 +376,7 @@ The naive SELECT-then-INSERT has a race: two concurrent queries at count=1 can b
 ```sql
 WITH quota AS (
   SELECT COUNT(*) AS used
-  FROM query_log
+  FROM gw_query_log
   WHERE user_id = $1
     AND bot_slug = $2
     AND was_paid_query = FALSE
@@ -396,7 +396,7 @@ SELECT
 
 Returns `{prior_used, allowed, log_id}`. If `allowed=FALSE`, the gateway returns the paywall response. If `allowed=TRUE`, the row is already in `query_log` with the placeholder `n8n_response_ms = NULL`; the gateway updates `n8n_response_ms` after n8n responds successfully. On n8n failure, the gateway **deletes the row** by `log_id` (failed queries don't count) and writes to `query_error_log` instead.
 
-This is one DB round trip and is atomic at row-insert time. Two concurrent queries at count=1 will each attempt the INSERT, but only one will succeed in pushing count past 2 within a single transaction's snapshot — the second one's `WHERE (SELECT used FROM quota) < 2` re-evaluation under MVCC is fine here because both queries are racing for the same logical "<2" outcome and both will allow at most one to win the count=2 boundary. To strictly serialize at the boundary, wrap in a `SELECT ... FROM users WHERE id=$1 FOR UPDATE` advisory step (per-user lock). The implementation uses `pg_advisory_xact_lock(hashtext($1::text || $2))` for a per-(user,bot) lock — cheap, deadlock-free, and releases on transaction end.
+This is one DB round trip and is atomic at row-insert time. Two concurrent queries at count=1 will each attempt the INSERT, but only one will succeed in pushing count past 2 within a single transaction's snapshot — the second one's `WHERE (SELECT used FROM quota) < 2` re-evaluation under MVCC is fine here because both queries are racing for the same logical "<2" outcome and both will allow at most one to win the count=2 boundary. To strictly serialize at the boundary, wrap in a `SELECT ... FROM gw_users WHERE id=$1 FOR UPDATE` advisory step (per-user lock). The implementation uses `pg_advisory_xact_lock(hashtext($1::text || $2))` for a per-(user,bot) lock — cheap, deadlock-free, and releases on transaction end.
 
 ## 8. Gateway endpoints
 
@@ -882,8 +882,8 @@ If a deploy goes wrong:
 
 ```sql
 -- Force user back to free tier immediately:
-UPDATE oauth_tokens   SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
-UPDATE subscriptions  SET status = 'cancelled', expires_at = NOW() WHERE user_id = $1 AND status = 'active';
+UPDATE gw_oauth_tokens   SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
+UPDATE gw_subscriptions  SET status = 'cancelled', expires_at = NOW() WHERE user_id = $1 AND status = 'active';
 ```
 
 ### 11.7 Observability (rev-2)

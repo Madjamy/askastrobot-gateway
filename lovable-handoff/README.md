@@ -34,7 +34,7 @@ Already created by the gateway's migration (`migrations/0001_aab_gateway.sql`).
 Your `stripe-webhook` Edge Function is the **only writer**. The gateway is read-only.
 
 ```sql
-public.subscriptions (
+public.gw_subscriptions (
   id, user_id, plan, bot_slug, status, expires_at,
   stripe_customer_id, stripe_subscription_id, stripe_checkout_session_id,
   cancel_at_period_end, created_at, updated_at

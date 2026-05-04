@@ -31,8 +31,8 @@ async def require_bearer(
         row = await conn.fetchrow(
             """
             SELECT t.user_id, t.scope, t.expires_at, u.email, u.google_id
-              FROM public.oauth_tokens t
-              JOIN public.users u ON u.id = t.user_id
+              FROM public.gw_oauth_tokens t
+              JOIN public.gw_users u ON u.id = t.user_id
              WHERE t.access_token = $1
                AND t.revoked_at IS NULL
             """,

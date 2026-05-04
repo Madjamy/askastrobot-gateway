@@ -15,8 +15,8 @@ https://stripe.com/docs/testing.
 5. Action retries automatically; bot answers.
 6. Verify in Supabase SQL editor:
    ```sql
-   SELECT * FROM users WHERE signup_source = 'gpt' ORDER BY created_at DESC LIMIT 1;
-   SELECT * FROM query_log ORDER BY created_at DESC LIMIT 1;
+   SELECT * FROM gw_users WHERE signup_source = 'gpt' ORDER BY created_at DESC LIMIT 1;
+   SELECT * FROM gw_query_log ORDER BY created_at DESC LIMIT 1;
    ```
 7. Ask a 2nd question. Check `query_log` has 2 rows for the user.
 
@@ -40,12 +40,12 @@ https://stripe.com/docs/testing.
 5. Verify in Stripe Dashboard → Payments: charge appears.
 6. Verify webhook log:
    ```sql
-   SELECT * FROM stripe_webhook_log ORDER BY received_at DESC LIMIT 5;
+   SELECT * FROM gw_stripe_webhook_log ORDER BY received_at DESC LIMIT 5;
    ```
    Should show `event_type = checkout.session.completed`, `status = processed`.
 7. Verify subscription:
    ```sql
-   SELECT * FROM subscriptions WHERE user_id = '<user-id>';
+   SELECT * FROM gw_subscriptions WHERE user_id = '<user-id>';
    ```
    Should have `plan='day_pass', status='active', expires_at` ~24h in future.
 8. Verify branded welcome email arrived in the test Google account inbox.
@@ -56,7 +56,7 @@ https://stripe.com/docs/testing.
 
 1. Manually expire the day pass in SQL:
    ```sql
-   UPDATE subscriptions SET expires_at = NOW() - INTERVAL '1 minute'
+   UPDATE gw_subscriptions SET expires_at = NOW() - INTERVAL '1 minute'
     WHERE user_id = '<user-id>' AND plan = 'day_pass';
    ```
 2. Ask another query. Should hit the paywall again (since 24h of free quota
@@ -99,7 +99,7 @@ https://stripe.com/docs/testing.
 
 1. Sign in. In Supabase, manually expire the access token:
    ```sql
-   UPDATE oauth_tokens SET expires_at = NOW() - INTERVAL '1 minute'
+   UPDATE gw_oauth_tokens SET expires_at = NOW() - INTERVAL '1 minute'
     WHERE user_id = '<user-id>' AND revoked_at IS NULL;
    ```
 2. Ask a query. ChatGPT should silently call `/oauth/token` with the

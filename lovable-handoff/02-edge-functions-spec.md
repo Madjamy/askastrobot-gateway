@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
 
   // 2. Find or create Stripe customer, locked to the OAuth email.
   const { data: user, error: userErr } = await supabase
-    .from("users")
+    .from("gw_users")
     .select("id, email, stripe_customer_id")
     .eq("id", claims.user_id)
     .single();
@@ -126,7 +126,7 @@ Deno.serve(async (req) => {
     });
     customerId = cust.id;
     await supabase
-      .from("users")
+      .from("gw_users")
       .update({ stripe_customer_id: customerId })
       .eq("id", user.id);
   }
@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
 
   // Idempotency: try to insert event_id; UNIQUE prevents reprocessing.
   const { error: dupeErr } = await supabase
-    .from("stripe_webhook_log")
+    .from("gw_stripe_webhook_log")
     .insert({
       event_id: event.id,
       event_type: event.type,
@@ -243,13 +243,13 @@ Deno.serve(async (req) => {
         break;
     }
     await supabase
-      .from("stripe_webhook_log")
+      .from("gw_stripe_webhook_log")
       .update({ processed_at: new Date().toISOString(), status: "processed" })
       .eq("event_id", event.id);
     return new Response("ok", { status: 200 });
   } catch (err) {
     await supabase
-      .from("stripe_webhook_log")
+      .from("gw_stripe_webhook_log")
       .update({ status: "failed", error_message: String(err).slice(0, 500) })
       .eq("event_id", event.id);
     // Return 500 so Stripe retries.
@@ -278,7 +278,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     expires_at = new Date(sub.current_period_end * 1000).toISOString();
   }
 
-  await supabase.from("subscriptions").upsert({
+  await supabase.from("gw_subscriptions").upsert({
     user_id,
     plan,
     bot_slug,
@@ -312,7 +312,7 @@ async function handleSubUpdated(sub: Stripe.Subscription) {
     : "expired";
 
   await supabase
-    .from("subscriptions")
+    .from("gw_subscriptions")
     .update({
       status: newStatus,
       expires_at: new Date(sub.current_period_end * 1000).toISOString(),
@@ -326,7 +326,7 @@ async function handleSubDeleted(sub: Stripe.Subscription) {
   // OR immediately if admin cancels with `prorate=false&invoice_now=false`.
   // We DO NOT change expires_at — the user keeps access until the period ends.
   await supabase
-    .from("subscriptions")
+    .from("gw_subscriptions")
     .update({ status: "cancelled" })
     .eq("stripe_subscription_id", sub.id);
 }
@@ -334,7 +334,7 @@ async function handleSubDeleted(sub: Stripe.Subscription) {
 async function handlePaymentFailed(inv: Stripe.Invoice) {
   if (!inv.subscription) return;
   await supabase
-    .from("subscriptions")
+    .from("gw_subscriptions")
     .update({ status: "past_due" })
     .eq("stripe_subscription_id", inv.subscription as string);
 }
@@ -349,7 +349,7 @@ async function sendWelcomeEmail(args: {
   currency: string;
 }) {
   const { data: user } = await supabase
-    .from("users").select("email").eq("id", args.user_id).single();
+    .from("gw_users").select("email").eq("id", args.user_id).single();
   if (!user) return;
 
   // Mint a 24-hour Stripe Customer Portal link.
@@ -384,7 +384,7 @@ async function sendWelcomeEmail(args: {
 
   const status = resp.ok ? "sent" : "failed";
   const data = await resp.json().catch(() => ({}));
-  await supabase.from("email_send_log").insert({
+  await supabase.from("gw_email_send_log").insert({
     user_id: args.user_id,
     to_email: user.email,
     template: "welcome_premium",
@@ -494,7 +494,7 @@ Deno.serve(async (req) => {
   const claims = await res.json();
 
   const { data: user } = await supabase
-    .from("users").select("stripe_customer_id").eq("id", claims.user_id).single();
+    .from("gw_users").select("stripe_customer_id").eq("id", claims.user_id).single();
   if (!user?.stripe_customer_id) {
     return json({ error: "no_stripe_customer" }, 404);
   }

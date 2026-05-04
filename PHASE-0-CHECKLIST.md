@@ -175,7 +175,7 @@ Verify:
 ```sql
 SELECT count(*) FROM information_schema.tables
  WHERE table_schema = 'public'
-   AND table_name IN ('oauth_codes','oauth_tokens','query_log','subscriptions','stripe_webhook_log','email_send_log');
+   AND table_name IN ('gw_oauth_codes','gw_oauth_tokens','gw_query_log','gw_subscriptions','gw_stripe_webhook_log','gw_email_send_log');
 -- expect: 6
 ```
 

@@ -60,7 +60,7 @@ async def oauth_authorize(request: Request) -> RedirectResponse:
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO public.oauth_authz_session
+            INSERT INTO public.gw_oauth_authz_session
                 (state, client_id, redirect_uri, scope, original_state, expires_at)
             VALUES ($1, $2, $3, $4, $5, $6)
             """,
@@ -103,7 +103,7 @@ async def oauth_google_callback(request: Request) -> RedirectResponse:
         sess = await conn.fetchrow(
             """
             SELECT client_id, redirect_uri, scope, original_state, expires_at
-              FROM public.oauth_authz_session
+              FROM public.gw_oauth_authz_session
              WHERE state = $1
             """,
             gw_state,
@@ -138,14 +138,15 @@ async def oauth_google_callback(request: Request) -> RedirectResponse:
     async with pool.acquire() as conn:
         user_row = await conn.fetchrow(
             """
-            INSERT INTO public.users (email, google_id, signup_source, last_seen_at)
-            VALUES ($1, $2, 'gpt', NOW())
+            INSERT INTO public.gw_users (email, google_id, name, signup_source, last_seen_at)
+            VALUES ($1, $2, $3, 'gpt', NOW())
             ON CONFLICT (email) DO UPDATE
-              SET google_id     = COALESCE(public.users.google_id, EXCLUDED.google_id),
+              SET google_id     = COALESCE(public.gw_users.google_id, EXCLUDED.google_id),
+                  name          = COALESCE(public.gw_users.name, EXCLUDED.name),
                   last_seen_at  = NOW()
             RETURNING id
             """,
-            email, google_id,
+            email, google_id, name,
         )
         user_id = str(user_row["id"])
 
@@ -153,7 +154,7 @@ async def oauth_google_callback(request: Request) -> RedirectResponse:
         oauth_code = secrets.token_urlsafe(48)
         await conn.execute(
             """
-            INSERT INTO public.oauth_codes (code, user_id, redirect_uri, scope, expires_at)
+            INSERT INTO public.gw_oauth_codes (code, user_id, redirect_uri, scope, expires_at)
             VALUES ($1, $2, $3, $4, $5)
             """,
             oauth_code,
@@ -164,7 +165,7 @@ async def oauth_google_callback(request: Request) -> RedirectResponse:
         )
 
         # One-shot use of the gw_state - delete it so it can't be replayed.
-        await conn.execute("DELETE FROM public.oauth_authz_session WHERE state = $1", gw_state)
+        await conn.execute("DELETE FROM public.gw_oauth_authz_session WHERE state = $1", gw_state)
 
     # Redirect to ChatGPT with the original state echoed back.
     qs = urlencode({"code": oauth_code, "state": sess["original_state"]})

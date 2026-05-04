@@ -70,7 +70,7 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
             row = await conn.fetchrow(
                 """
                 SELECT user_id, redirect_uri, scope, expires_at, used_at
-                  FROM public.oauth_codes
+                  FROM public.gw_oauth_codes
                  WHERE code = $1
                  FOR UPDATE
                 """,
@@ -84,7 +84,7 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
                 raise _401("code_expired")
 
             await conn.execute(
-                "UPDATE public.oauth_codes SET used_at = NOW() WHERE code = $1",
+                "UPDATE public.gw_oauth_codes SET used_at = NOW() WHERE code = $1",
                 code,
             )
 
@@ -93,7 +93,7 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
             now = datetime.now(tz=timezone.utc)
             await conn.execute(
                 """
-                INSERT INTO public.oauth_tokens
+                INSERT INTO public.gw_oauth_tokens
                     (access_token, refresh_token, user_id, expires_at, refresh_expires_at, scope)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 """,
@@ -124,7 +124,7 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
             # Atomic claim: revoke an active token only if it's still active.
             row = await conn.fetchrow(
                 """
-                UPDATE public.oauth_tokens
+                UPDATE public.gw_oauth_tokens
                    SET revoked_at = NOW()
                  WHERE refresh_token = $1
                    AND revoked_at IS NULL
@@ -139,8 +139,8 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
                 grace = await conn.fetchrow(
                     """
                     SELECT t2.access_token, t2.refresh_token, t2.expires_at, t2.scope
-                      FROM public.oauth_tokens t1
-                      JOIN public.oauth_tokens t2 ON t2.access_token = t1.rotated_to
+                      FROM public.gw_oauth_tokens t1
+                      JOIN public.gw_oauth_tokens t2 ON t2.access_token = t1.rotated_to
                      WHERE t1.refresh_token = $1
                        AND t1.revoked_at IS NOT NULL
                        AND t1.revoked_at > NOW() - ($2 || ' seconds')::interval
@@ -167,7 +167,7 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
             now = datetime.now(tz=timezone.utc)
             await conn.execute(
                 """
-                INSERT INTO public.oauth_tokens
+                INSERT INTO public.gw_oauth_tokens
                     (access_token, refresh_token, user_id, expires_at, refresh_expires_at, scope)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 """,
@@ -177,7 +177,7 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
                 row["scope"] or "read:astro write:query",
             )
             await conn.execute(
-                "UPDATE public.oauth_tokens SET rotated_to = $1 WHERE access_token = $2",
+                "UPDATE public.gw_oauth_tokens SET rotated_to = $1 WHERE access_token = $2",
                 new_access, row["access_token"],
             )
 

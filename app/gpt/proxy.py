@@ -100,7 +100,7 @@ async def gpt_query(
     async with pool.acquire() as conn:
         active_sub = await conn.fetchval(
             """
-            SELECT 1 FROM public.subscriptions
+            SELECT 1 FROM public.gw_subscriptions
              WHERE user_id = $1
                AND status = 'active'
                AND expires_at > NOW()
@@ -128,14 +128,14 @@ async def gpt_query(
                 """
                 WITH quota AS (
                   SELECT COUNT(*) AS used
-                    FROM public.query_log
+                    FROM public.gw_query_log
                    WHERE user_id = $1
                      AND bot_slug = $2
                      AND was_paid_query = FALSE
                      AND created_at > NOW() - INTERVAL '24 hours'
                 ),
                 ins AS (
-                  INSERT INTO public.query_log
+                  INSERT INTO public.gw_query_log
                       (user_id, email, bot_slug, query_text, query_type, birth_details_json, was_paid_query)
                   SELECT $1, $3, $2, $4, $5, $6::jsonb, FALSE
                   WHERE (SELECT used FROM quota) < 2
@@ -206,10 +206,10 @@ async def _forward_and_log(
         # log the error, and return 503.
         async with pool.acquire() as conn:
             if log_row_id is not None and not was_paid:
-                await conn.execute("DELETE FROM public.query_log WHERE id = $1", log_row_id)
+                await conn.execute("DELETE FROM public.gw_query_log WHERE id = $1", log_row_id)
             await conn.execute(
                 """
-                INSERT INTO public.query_error_log
+                INSERT INTO public.gw_query_error_log
                     (user_id, bot_slug, error_type, error_message, request_body)
                 VALUES ($1, $2, $3, $4, $5::jsonb)
                 """,
@@ -229,13 +229,13 @@ async def _forward_and_log(
     async with pool.acquire() as conn:
         if log_row_id is not None:
             await conn.execute(
-                "UPDATE public.query_log SET n8n_response_ms = $1 WHERE id = $2",
+                "UPDATE public.gw_query_log SET n8n_response_ms = $1 WHERE id = $2",
                 elapsed_ms, log_row_id,
             )
         else:
             await conn.execute(
                 """
-                INSERT INTO public.query_log
+                INSERT INTO public.gw_query_log
                     (user_id, email, bot_slug, query_text, query_type,
                      birth_details_json, n8n_response_ms, was_paid_query)
                 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
