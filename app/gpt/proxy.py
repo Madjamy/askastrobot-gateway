@@ -126,6 +126,8 @@ async def gpt_query(
                 was_paid = True
                 allowed = True
             else:
+                # Lifetime free-tier limit: 2 free queries per (user, bot) ever.
+                # Once exhausted, paywall is permanent until the user subscribes.
                 used = await conn.fetchval(
                     """
                     SELECT COUNT(*)
@@ -133,7 +135,6 @@ async def gpt_query(
                      WHERE user_id = $1
                        AND bot_slug = $2
                        AND was_paid_query = FALSE
-                       AND created_at > NOW() - INTERVAL '24 hours'
                     """,
                     user.user_id, bot_slug,
                 )
@@ -154,7 +155,7 @@ async def gpt_query(
         return JSONResponse({
             "status": "free_limit_reached",
             "message": (
-                "You've used your 2 free queries for this bot in the last 24 hours. "
+                "You've used your 2 free queries for this bot. "
                 "Upgrade below to continue:"
             ),
             "upgrade_url": upgrade_url,
