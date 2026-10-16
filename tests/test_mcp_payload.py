@@ -18,7 +18,7 @@ def _load(name: str):
 def test_natal_core_blocks_and_houses() -> None:
     out = compact_chart(_load("n8n_horoscope_sample.json"), chart_type="natal")
     k = out["Janam Kundali"]
-    assert k["lagna"] == {"sign": "Libra", "deg": "28°26'", "nak": "Visakha-3", "lord": "Venus"}
+    assert k["lagna"] == {"sign": "Libra", "deg": "28°25'", "nak": "Visakha-3", "lord": "Venus"}  # API: 28°25'50"
     assert set(k["planets"]) == {"Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"}
     h2 = k["houses"]["2"]
     assert h2["sign"] == "Scorpio" and h2["lord"] == "Mars" and h2["lord_in"] == 11
@@ -77,8 +77,11 @@ def test_inactive_status_rejected() -> None:
 def test_helpers() -> None:
     assert house_from("Pisces", "Libra") == 6
     assert house_from("Libra", "Libra") == 1
-    assert fmt_degree(28.43055) == "28°26'"
-    assert fmt_degree(29.9999) == "30°00'"
+    assert fmt_degree(28.43055) == "28°25'"     # truncated, not rounded
+    assert fmt_degree(29.9999) == "29°59'"
+    assert fmt_degree(30.5) is None
+    assert fmt_degree(29.99999999999) == "29°59'"
+    assert fmt_degree(12.1) == "12°06'"
     planets = {"Mars": {"sign": "Aries"}, "Moon": {"sign": "Cancer"}, "Venus": {"sign": "Leo"}}
     assert manglik("Aries", planets)["summary"] == "Manglik (from Lagna)"       # Mars in 1st
     m = manglik("Taurus", planets)                                              # 12th from Lagna
@@ -95,6 +98,7 @@ def test_invalid_house_or_missing_degree_rejected() -> None:
     with pytest.raises(PayloadError):
         compact_chart(raw, chart_type="natal")
     raw = _load("n8n_horoscope_sample.json")
-    raw[0]["data"][0]["output"]["Venus"]["normDegree"] = None
+    for key in ("normDegree", "degrees", "minutes"):
+        raw[0]["data"][0]["output"]["Venus"][key] = None
     with pytest.raises(PayloadError):
         compact_chart(raw, chart_type="natal")

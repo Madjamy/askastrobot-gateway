@@ -70,15 +70,24 @@ def house_from(sign: str, reference_sign: str) -> int:
 
 
 def fmt_degree(norm_degree: Any) -> str | None:
+    """D°M' with minutes truncated (not rounded), as Vedic software and the API display it."""
     try:
         d = float(norm_degree)
     except (TypeError, ValueError):
         return None
-    deg = int(d)
-    minutes = int(round((d - deg) * 60))
-    if minutes == 60:
-        deg, minutes = deg + 1, 0
-    return f"{deg}°{minutes:02d}'"
+    if not 0 <= d < 30:
+        return None
+    # The epsilon absorbs float noise (e.g. 0.1 * 60 = 5.999...); the clamp keeps 29°59'59.99" valid.
+    total_minutes = min(int(d * 60 + 1e-9), 30 * 60 - 1)
+    return f"{total_minutes // 60}°{total_minutes % 60:02d}'"
+
+
+def _raw_degree(raw: dict[str, Any]) -> str | None:
+    """Prefer the API's own degrees/minutes; fall back to normDegree."""
+    deg, minutes = raw.get("degrees"), raw.get("minutes")
+    if isinstance(deg, int) and isinstance(minutes, int) and 0 <= deg < 30 and 0 <= minutes < 60:
+        return f"{deg}°{minutes:02d}'"
+    return fmt_degree(raw.get("normDegree"))
 
 
 def _truthy(value: Any) -> bool:
@@ -144,7 +153,7 @@ def build_planets(kundali: dict[str, Any], extended: dict[str, dict[str, Any]]) 
         pada = raw.get("nakshatra_pada")
         planets[name] = {
             "sign": sign,
-            "deg": fmt_degree(raw.get("normDegree")),
+            "deg": _raw_degree(raw),
             "house": raw.get("house_number"),
             "nak": f"{nak}-{pada}" if nak and pada else nak,
             "flags": flags,
@@ -160,7 +169,7 @@ def build_lagna(kundali: dict[str, Any]) -> dict[str, Any]:
     nak, pada = asc.get("nakshatra_name"), asc.get("nakshatra_pada")
     return {
         "sign": sign,
-        "deg": fmt_degree(asc.get("normDegree")),
+        "deg": _raw_degree(asc),
         "nak": f"{nak}-{pada}" if nak and pada else nak,
         "lord": SIGN_LORDS[sign],
     }
