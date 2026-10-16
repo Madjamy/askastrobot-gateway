@@ -1,0 +1,584 @@
+[
+ {
+  "status": "active",
+  "data": [
+   {
+    "Identifier": "Janam Kundali",
+    "output": {
+     "Ascendant": {
+      "current_sign": 7,
+      "house_number": 1,
+      "fullDegree": 208.43055408256998,
+      "normDegree": 28.430554082569984,
+      "isRetro": "false",
+      "degrees": 28,
+      "minutes": 25,
+      "seconds": 0.0,
+      "localized_name": "Ascendant",
+      "zodiac_sign_name": "Libra",
+      "zodiac_sign_lord": "Venus",
+      "nakshatra_number": 16,
+      "nakshatra_name": "Visakha",
+      "nakshatra_pada": 3,
+      "nakshatra_vimsottari_lord": "Jupiter"
+     },
+     "Sun": {
+      "current_sign": 4,
+      "house_number": 10,
+      "fullDegree": 90.06573559015678,
+      "normDegree": 0.06573559015677688,
+      "isRetro": "false",
+      "degrees": 0,
+      "minutes": 3,
+      "seconds": 0.0,
+      "localized_name": "Sun",
+      "zodiac_sign_name": "Cancer",
+      "zodiac_sign_lord": "Moon",
+      "nakshatra_number": 7,
+      "nakshatra_name": "Punarvasu",
+      "nakshatra_pada": 4,
+      "nakshatra_vimsottari_lord": "Jupiter"
+     },
+     "Moon": {
+      "current_sign": 2,
+      "house_number": 8,
+      "fullDegree": 49.62342689209504,
+      "normDegree": 19.62342689209504,
+      "isRetro": "false",
+      "degrees": 19,
+      "minutes": 37,
+      "seconds": 0.0,
+      "localized_name": "Moon",
+      "zodiac_sign_name": "Taurus",
+      "zodiac_sign_lord": "Venus",
+      "nakshatra_number": 4,
+      "nakshatra_name": "Rohini",
+      "nakshatra_pada": 3,
+      "nakshatra_vimsottari_lord": "Moon"
+     },
+     "Mars": {
+      "current_sign": 5,
+      "house_number": 11,
+      "fullDegree": 139.81290951778124,
+      "normDegree": 19.812909517781236,
+      "isRetro": "false",
+      "degrees": 19,
+      "minutes": 48,
+      "seconds": 0.0,
+      "localized_name": "Mars",
+      "zodiac_sign_name": "Leo",
+      "zodiac_sign_lord": "Sun",
+      "nakshatra_number": 11,
+      "nakshatra_name": "Poorva Phalguni(Pubba)",
+      "nakshatra_pada": 2,
+      "nakshatra_vimsottari_lord": "Venus"
+     },
+     "Mercury": {
+      "current_sign": 3,
+      "house_number": 9,
+      "fullDegree": 87.95086153446532,
+      "normDegree": 27.950861534465318,
+      "isRetro": "true",
+      "degrees": 27,
+      "minutes": 57,
+      "seconds": 0.0,
+      "localized_name": "Mercury",
+      "zodiac_sign_name": "Gemini",
+      "zodiac_sign_lord": "Mercury",
+      "nakshatra_number": 7,
+      "nakshatra_name": "Punarvasu",
+      "nakshatra_pada": 3,
+      "nakshatra_vimsottari_lord": "Jupiter"
+     },
+     "Jupiter": {
+      "current_sign": 6,
+      "house_number": 12,
+      "fullDegree": 163.8767841232593,
+      "normDegree": 13.876784123259313,
+      "isRetro": "false",
+      "degrees": 13,
+      "minutes": 52,
+      "seconds": 0.0,
+      "localized_name": "Jupiter",
+      "zodiac_sign_name": "Virgo",
+      "zodiac_sign_lord": "Mercury",
+      "nakshatra_number": 13,
+      "nakshatra_name": "Hasta",
+      "nakshatra_pada": 2,
+      "nakshatra_vimsottari_lord": "Moon"
+     },
+     "Venus": {
+      "current_sign": 2,
+      "house_number": 8,
+      "fullDegree": 47.55424999955066,
+      "normDegree": 17.554249999550663,
+      "isRetro": "false",
+      "degrees": 17,
+      "minutes": 33,
+      "seconds": 0.0,
+      "localized_name": "Venus",
+      "zodiac_sign_name": "Taurus",
+      "zodiac_sign_lord": "Venus",
+      "nakshatra_number": 4,
+      "nakshatra_name": "Rohini",
+      "nakshatra_pada": 3,
+      "nakshatra_vimsottari_lord": "Moon"
+     },
+     "Saturn": {
+      "current_sign": 11,
+      "house_number": 5,
+      "fullDegree": 305.5354623899814,
+      "normDegree": 5.535462389981376,
+      "isRetro": "true",
+      "degrees": 5,
+      "minutes": 32,
+      "seconds": 0.0,
+      "localized_name": "Saturn",
+      "zodiac_sign_name": "Aquarius",
+      "zodiac_sign_lord": "Saturn",
+      "nakshatra_number": 23,
+      "nakshatra_name": "Dhanishta",
+      "nakshatra_pada": 4,
+      "nakshatra_vimsottari_lord": "Mars"
+     },
+     "Rahu": {
+      "current_sign": 8,
+      "house_number": 2,
+      "fullDegree": 226.25987821090652,
+      "normDegree": 16.25987821090652,
+      "isRetro": "true",
+      "degrees": 16,
+      "minutes": 15,
+      "seconds": 0.0,
+      "localized_name": "Rahu",
+      "zodiac_sign_name": "Scorpio",
+      "zodiac_sign_lord": "Mars",
+      "nakshatra_number": 17,
+      "nakshatra_name": "Anuradha",
+      "nakshatra_pada": 4,
+      "nakshatra_vimsottari_lord": "Saturn"
+     },
+     "Ketu": {
+      "current_sign": 2,
+      "house_number": 8,
+      "fullDegree": 46.25987821090652,
+      "normDegree": 16.25987821090652,
+      "isRetro": "true",
+      "degrees": 16,
+      "minutes": 15,
+      "seconds": 0.0,
+      "localized_name": "Ketu",
+      "zodiac_sign_name": "Taurus",
+      "zodiac_sign_lord": "Venus",
+      "nakshatra_number": 4,
+      "nakshatra_name": "Rohini",
+      "nakshatra_pada": 2,
+      "nakshatra_vimsottari_lord": "Moon"
+     },
+     "Uranus": {
+      "current_sign": 9,
+      "house_number": 3,
+      "fullDegree": 266.2798867624235,
+      "normDegree": 26.279886762423473,
+      "isRetro": "true",
+      "degrees": 26,
+      "minutes": 16,
+      "seconds": 0.0,
+      "localized_name": "Uranus",
+      "zodiac_sign_name": "Sagittarius",
+      "zodiac_sign_lord": "Jupiter",
+      "nakshatra_number": 20,
+      "nakshatra_name": "Poorvaashaada",
+      "nakshatra_pada": 4,
+      "nakshatra_vimsottari_lord": "Venus"
+     },
+     "Neptune": {
+      "current_sign": 9,
+      "house_number": 3,
+      "fullDegree": 265.88530125598777,
+      "normDegree": 25.88530125598777,
+      "isRetro": "true",
+      "degrees": 25,
+      "minutes": 53,
+      "seconds": 0.0,
+      "localized_name": "Neptune",
+      "zodiac_sign_name": "Sagittarius",
+      "zodiac_sign_lord": "Jupiter",
+      "nakshatra_number": 20,
+      "nakshatra_name": "Poorvaashaada",
+      "nakshatra_pada": 4,
+      "nakshatra_vimsottari_lord": "Venus"
+     },
+     "Pluto": {
+      "current_sign": 7,
+      "house_number": 1,
+      "fullDegree": 209.03358647467607,
+      "normDegree": 29.03358647467607,
+      "isRetro": "true",
+      "degrees": 29,
+      "minutes": 2,
+      "seconds": 0.0,
+      "localized_name": "Pluto",
+      "zodiac_sign_name": "Libra",
+      "zodiac_sign_lord": "Venus",
+      "nakshatra_number": 16,
+      "nakshatra_name": "Visakha",
+      "nakshatra_pada": 3,
+      "nakshatra_vimsottari_lord": "Jupiter"
+     }
+    }
+   },
+   {
+    "Identifier": "Planetary Drishti (Aspects)",
+    "note": "The following aspects are based on house numbers (Bhavas), not zodiac signs (Rashis).",
+    "output": {
+     "Saturn (occupies House 5)": {
+      "aspects_on_houses": [
+       7,
+       11,
+       2
+      ]
+     },
+     "Mars (occupies House 11)": {
+      "aspects_on_houses": [
+       2,
+       5,
+       6
+      ]
+     },
+     "Jupiter (occupies House 12)": {
+      "aspects_on_houses": [
+       4,
+       6,
+       8
+      ]
+     },
+     "Rahu (occupies House 2)": {
+      "aspects_on_houses": [
+       6,
+       8,
+       10
+      ]
+     },
+     "Sun (occupies House 10)": {
+      "aspects_on_houses": [
+       4
+      ]
+     },
+     "Moon (occupies House 8)": {
+      "aspects_on_houses": [
+       2
+      ]
+     },
+     "Mercury (occupies House 9)": {
+      "aspects_on_houses": [
+       3
+      ]
+     },
+     "Venus (occupies House 8)": {
+      "aspects_on_houses": [
+       2
+      ]
+     }
+    }
+   },
+   {
+    "Identifier": "Yoga Detection",
+    "note": "These yogas are detected based on house and sign placements.",
+    "output": [
+     {
+      "yoga": "Vipreet Raj Yoga",
+      "reason": "Jupiter is a dusthana lord placed in another dusthana house"
+     }
+    ]
+   },
+   {
+    "Identifier": "Shani Sade Sathi, Dhaiya, Kantak Shani",
+    "output": {
+     "analysis_date": "2026-10-12",
+     "moon_sign": 2,
+     "saturn_transit_sign": 12,
+     "sade_sathi": "No",
+     "dhaiya": "No",
+     "kantak_shani": "No"
+    }
+   },
+   {
+    "Identifier": "Maha Dasha Antar Dasha",
+    "output": {
+     "Jupiter": {
+      "Mercury": {
+       "start_time": "2025-05-01 00:20:38",
+       "end_time": "2027-08-06 22:17:24"
+      },
+      "Ketu": {
+       "start_time": "2027-08-06 22:17:24",
+       "end_time": "2028-07-12 20:01:57"
+      },
+      "Venus": {
+       "start_time": "2028-07-12 20:01:57",
+       "end_time": "2031-03-13 20:26:22"
+      },
+      "Sun": {
+       "start_time": "2031-03-13 20:26:22",
+       "end_time": "2031-12-31 01:21:41"
+      },
+      "Moon": {
+       "start_time": "2031-12-31 01:21:41",
+       "end_time": "2033-05-01 01:33:55"
+      },
+      "Mars": {
+       "start_time": "2033-05-01 01:33:55",
+       "end_time": "2034-04-06 23:18:17"
+      },
+      "Rahu": {
+       "start_time": "2034-04-06 23:18:17",
+       "end_time": "2036-08-30 14:04:17"
+      }
+     },
+     "Saturn": {
+      "Saturn": {
+       "start_time": "2036-08-30 14:04:17",
+       "end_time": "2039-09-03 09:33:06"
+      },
+      "Mercury": {
+       "start_time": "2039-09-03 09:33:06",
+       "end_time": "2042-05-13 13:06:46"
+      }
+     }
+    }
+   },
+   {
+    "Dasha": "Current Dasha",
+    "maha_dasa": {
+     "Lord": "Jupiter",
+     "start_time": "2020-08-30 11:48:06.420033",
+     "end_time": "2036-08-30 14:14:44.013633"
+    },
+    "antar_dasa": {
+     "Lord": "Mercury",
+     "start_time": "2025-05-01 00:30:52.384833",
+     "end_time": "2027-08-06 22:27:38.710593"
+    },
+    "pratyantar_dasa": {
+     "Lord": "Rahu",
+     "start_time": "2026-08-06 06:34:04.250049",
+     "end_time": "2026-12-08 11:03:35.198913"
+    }
+   },
+   {
+    "Current Transit / Gochar - Sign & Motion": [
+     {
+      "Planet": "Sun",
+      "Sign": "Virgo",
+      "Retrograde": false
+     },
+     {
+      "Planet": "Moon",
+      "Sign": "Libra",
+      "Retrograde": false
+     },
+     {
+      "Planet": "Mars",
+      "Sign": "Cancer",
+      "Retrograde": false
+     },
+     {
+      "Planet": "Mercury",
+      "Sign": "Libra",
+      "Retrograde": false
+     },
+     {
+      "Planet": "Jupiter",
+      "Sign": "Cancer",
+      "Retrograde": false
+     },
+     {
+      "Planet": "Venus",
+      "Sign": "Libra",
+      "Retrograde": true
+     },
+     {
+      "Planet": "Saturn",
+      "Sign": "Pisces",
+      "Retrograde": true
+     },
+     {
+      "Planet": "Rahu",
+      "Sign": "Aquarius"
+     },
+     {
+      "Planet": "Ketu",
+      "Sign": "Leo"
+     }
+    ]
+   },
+   {
+    "Identifier": "Navamsa",
+    "output": {
+     "0": {
+      "name": "Ascendant",
+      "isRetro": "false",
+      "current_sign": 3,
+      "house_number": 1
+     },
+     "1": {
+      "name": "Sun",
+      "isRetro": "false",
+      "current_sign": 4,
+      "house_number": 2
+     },
+     "2": {
+      "name": "Moon",
+      "isRetro": "false",
+      "current_sign": 4,
+      "house_number": 2
+     },
+     "3": {
+      "name": "Mars",
+      "isRetro": "false",
+      "current_sign": 6,
+      "house_number": 4
+     },
+     "4": {
+      "name": "Mercury",
+      "isRetro": "true",
+      "current_sign": 3,
+      "house_number": 1
+     },
+     "5": {
+      "name": "Jupiter",
+      "isRetro": "false",
+      "current_sign": 2,
+      "house_number": 12
+     },
+     "6": {
+      "name": "Venus",
+      "isRetro": "false",
+      "current_sign": 3,
+      "house_number": 1
+     },
+     "7": {
+      "name": "Saturn",
+      "isRetro": "true",
+      "current_sign": 8,
+      "house_number": 6
+     },
+     "8": {
+      "name": "Rahu",
+      "isRetro": "true",
+      "current_sign": 8,
+      "house_number": 6
+     },
+     "9": {
+      "name": "Ketu",
+      "isRetro": "true",
+      "current_sign": 2,
+      "house_number": 12
+     },
+     "10": {
+      "name": "Uranus",
+      "isRetro": "true",
+      "current_sign": 8,
+      "house_number": 6
+     },
+     "11": {
+      "name": "Neptune",
+      "isRetro": "true",
+      "current_sign": 8,
+      "house_number": 6
+     },
+     "12": {
+      "name": "Pluto",
+      "isRetro": "true",
+      "current_sign": 3,
+      "house_number": 1
+     }
+    }
+   },
+   {
+    "Identifier": "D10",
+    "output": {
+     "0": {
+      "name": "Ascendant",
+      "isRetro": "false",
+      "current_sign": 4,
+      "house_number": 1
+     },
+     "1": {
+      "name": "Sun",
+      "isRetro": "false",
+      "current_sign": 12,
+      "house_number": 9
+     },
+     "2": {
+      "name": "Moon",
+      "isRetro": "false",
+      "current_sign": 4,
+      "house_number": 1
+     },
+     "3": {
+      "name": "Mars",
+      "isRetro": "false",
+      "current_sign": 11,
+      "house_number": 8
+     },
+     "4": {
+      "name": "Mercury",
+      "isRetro": "true",
+      "current_sign": 12,
+      "house_number": 9
+     },
+     "5": {
+      "name": "Jupiter",
+      "isRetro": "false",
+      "current_sign": 6,
+      "house_number": 3
+     },
+     "6": {
+      "name": "Venus",
+      "isRetro": "false",
+      "current_sign": 3,
+      "house_number": 12
+     },
+     "7": {
+      "name": "Saturn",
+      "isRetro": "true",
+      "current_sign": 12,
+      "house_number": 9
+     },
+     "8": {
+      "name": "Rahu",
+      "isRetro": "true",
+      "current_sign": 9,
+      "house_number": 6
+     },
+     "9": {
+      "name": "Ketu",
+      "isRetro": "true",
+      "current_sign": 3,
+      "house_number": 12
+     },
+     "10": {
+      "name": "Uranus",
+      "isRetro": "true",
+      "current_sign": 5,
+      "house_number": 2
+     },
+     "11": {
+      "name": "Neptune",
+      "isRetro": "true",
+      "current_sign": 5,
+      "house_number": 2
+     },
+     "12": {
+      "name": "Pluto",
+      "isRetro": "true",
+      "current_sign": 4,
+      "house_number": 1
+     }
+    }
+   }
+  ]
+ }
+]

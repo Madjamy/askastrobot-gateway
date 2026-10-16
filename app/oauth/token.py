@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import get_pool
 from app.logging_setup import get_logger
+from app.oauth.mcp_clients import is_mcp_client, verify_pkce
 from app.settings import get_settings
 
 router = APIRouter()
@@ -51,37 +52,61 @@ async def oauth_token(request: Request) -> JSONResponse:
     except Exception:
         return _err("invalid_request")
 
-    grant_type = form.get("grant_type") or ""
-    client_id = form.get("client_id") or ""
-    client_secret = form.get("client_secret") or ""
+    grant_type = str(form.get("grant_type") or "")
+    client_id = str(form.get("client_id") or "")
+    client_secret = str(form.get("client_secret") or "")
 
-    if not grant_type or not client_id or not client_secret:
+    if not grant_type or not client_id:
         return _err("invalid_request")
 
-    if (
-        not hmac.compare_digest(str(client_id), settings.oauth_client_id)
-        or not hmac.compare_digest(str(client_secret), settings.oauth_client_secret)
-    ):
-        log.warning("oauth.token.bad_client_creds")
-        return _err("invalid_client")
+    # MCP connector: public client (token_endpoint_auth_method "none"), PKCE-bound.
+    # mcp_client_id is None for the legacy Custom GPT client.
+    mcp_client_id: str | None = None
+    if is_mcp_client(client_id):
+        mcp_client_id = client_id
+    else:
+        if not client_secret:
+            return _err("invalid_request")
+        if (
+            not hmac.compare_digest(client_id, settings.oauth_client_id)
+            or not hmac.compare_digest(client_secret, settings.oauth_client_secret)
+        ):
+            log.warning("oauth.token.bad_client_creds")
+            return _err("invalid_client")
+
+    resource = str(form.get("resource") or "") or None
 
     if grant_type == "authorization_code":
-        code = form.get("code") or ""
-        redirect_uri = form.get("redirect_uri") or ""
+        code = str(form.get("code") or "")
+        redirect_uri = str(form.get("redirect_uri") or "")
         if not code or not redirect_uri:
             return _err("invalid_request")
-        return await _exchange_code(str(code), str(redirect_uri))
+        return await _exchange_code(
+            code, redirect_uri,
+            mcp_client_id=mcp_client_id,
+            code_verifier=str(form.get("code_verifier") or "") or None,
+            resource=resource,
+        )
 
     if grant_type == "refresh_token":
-        refresh_token = form.get("refresh_token") or ""
+        refresh_token = str(form.get("refresh_token") or "")
         if not refresh_token:
             return _err("invalid_request")
-        return await _refresh(str(refresh_token))
+        if mcp_client_id is not None and resource is not None and resource != settings.mcp_resource_url:
+            return _err("invalid_target")
+        return await _refresh(refresh_token, mcp_client_id=mcp_client_id)
 
     return _err("unsupported_grant_type")
 
 
-async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
+async def _exchange_code(
+    code: str,
+    redirect_uri: str,
+    *,
+    mcp_client_id: str | None = None,
+    code_verifier: str | None = None,
+    resource: str | None = None,
+) -> JSONResponse:
     settings = get_settings()
     pool = get_pool()
 
@@ -89,7 +114,8 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
         async with conn.transaction():
             row = await conn.fetchrow(
                 """
-                SELECT user_id, redirect_uri, scope, expires_at, used_at
+                SELECT user_id, redirect_uri, scope, expires_at, used_at,
+                       client_id, code_challenge, resource
                   FROM public.gw_oauth_codes
                  WHERE code = $1
                  FOR UPDATE
@@ -102,6 +128,16 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
                 return _err("redirect_uri_mismatch")
             if row["expires_at"] < datetime.now(tz=timezone.utc):
                 return _err("code_expired")
+            # A code may only be redeemed by the kind of client it was issued to.
+            if row["client_id"] != mcp_client_id:
+                log.warning("oauth.token.client_mismatch")
+                return _err("invalid_grant")
+            if mcp_client_id is not None:
+                if not row["code_challenge"] or not verify_pkce(code_verifier, row["code_challenge"]):
+                    log.warning("oauth.token.pkce_failed")
+                    return _err("invalid_grant")
+                if resource is not None and resource != row["resource"]:
+                    return _err("invalid_target")
 
             await conn.execute(
                 "UPDATE public.gw_oauth_codes SET used_at = NOW() WHERE code = $1",
@@ -114,8 +150,9 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
             await conn.execute(
                 """
                 INSERT INTO public.gw_oauth_tokens
-                    (access_token, refresh_token, user_id, expires_at, refresh_expires_at, scope)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                    (access_token, refresh_token, user_id, expires_at, refresh_expires_at, scope,
+                     client_id, resource)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 """,
                 access_token,
                 refresh_token,
@@ -123,6 +160,8 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
                 now + timedelta(seconds=settings.oauth_access_token_ttl),
                 now + timedelta(seconds=settings.oauth_refresh_token_ttl),
                 row["scope"] or "read:astro write:query",
+                row["client_id"],
+                row["resource"],
             )
 
     log.info("oauth.token.minted", grant="authorization_code")
@@ -138,7 +177,7 @@ async def _exchange_code(code: str, redirect_uri: str) -> JSONResponse:
     )
 
 
-async def _refresh(presented_refresh: str) -> JSONResponse:
+async def _refresh(presented_refresh: str, *, mcp_client_id: str | None = None) -> JSONResponse:
     settings = get_settings()
     pool = get_pool()
 
@@ -152,9 +191,10 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
                  WHERE refresh_token = $1
                    AND revoked_at IS NULL
                    AND refresh_expires_at > NOW()
-                RETURNING access_token, user_id, scope
+                   AND client_id IS NOT DISTINCT FROM $2
+                RETURNING access_token, user_id, scope, client_id, resource
                 """,
-                presented_refresh,
+                presented_refresh, mcp_client_id,
             )
 
             if row is None:
@@ -168,10 +208,31 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
                        AND t1.revoked_at IS NOT NULL
                        AND t1.revoked_at > NOW() - make_interval(secs => $2)
                        AND t2.revoked_at IS NULL
+                       AND t1.client_id IS NOT DISTINCT FROM $3
                     """,
-                    presented_refresh, _REFRESH_GRACE_SECONDS,
+                    presented_refresh, _REFRESH_GRACE_SECONDS, mcp_client_id,
                 )
                 if grace is None:
+                    if mcp_client_id is not None:
+                        # Replay of an already-rotated MCP refresh token outside the grace
+                        # window: assume theft and sign out this user's plugin sessions
+                        # (RFC 9700 4.14.2). Legacy GPT behaviour is unchanged.
+                        revoked = await conn.execute(
+                            """
+                            UPDATE public.gw_oauth_tokens AS t
+                               SET revoked_at = NOW()
+                              FROM public.gw_oauth_tokens AS old
+                             WHERE old.refresh_token = $1
+                               AND old.revoked_at IS NOT NULL
+                               AND old.client_id = $2
+                               AND t.user_id = old.user_id
+                               AND t.client_id = $2
+                               AND t.revoked_at IS NULL
+                            """,
+                            presented_refresh, mcp_client_id,
+                        )
+                        if revoked != "UPDATE 0":
+                            log.warning("oauth.refresh.replay_detected", revoked=revoked)
                     log.warning("oauth.refresh.invalid")
                     return _err("invalid_grant")
                 # Idempotent retry: return the post-rotation pair.
@@ -195,13 +256,15 @@ async def _refresh(presented_refresh: str) -> JSONResponse:
             await conn.execute(
                 """
                 INSERT INTO public.gw_oauth_tokens
-                    (access_token, refresh_token, user_id, expires_at, refresh_expires_at, scope)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                    (access_token, refresh_token, user_id, expires_at, refresh_expires_at, scope,
+                     client_id, resource)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 """,
                 new_access, new_refresh, row["user_id"],
                 now + timedelta(seconds=settings.oauth_access_token_ttl),
                 now + timedelta(seconds=settings.oauth_refresh_token_ttl),
                 row["scope"] or "read:astro write:query",
+                row["client_id"], row["resource"],
             )
             await conn.execute(
                 "UPDATE public.gw_oauth_tokens SET rotated_to = $1 WHERE access_token = $2",

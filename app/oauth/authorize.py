@@ -31,6 +31,7 @@ from fastapi.responses import RedirectResponse
 
 from app.db import get_pool
 from app.logging_setup import get_logger
+from app.oauth.mcp_clients import is_mcp_client, is_valid_code_challenge, is_valid_mcp_redirect
 from app.oauth.redirect_uri import is_valid_chatgpt_redirect
 from app.settings import get_settings
 
@@ -79,10 +80,29 @@ async def oauth_authorize(request: Request):
     # failures all return 401 (never 400/403).
     if response_type != "code":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unsupported_response_type")
-    if not hmac.compare_digest(client_id, settings.oauth_client_id):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_client")
-    if not is_valid_chatgpt_redirect(redirect_uri):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "redirect_uri_not_allowed")
+
+    # Two kinds of client: the legacy Custom GPT Action (static client id + secret)
+    # and the ChatGPT MCP connector (public CIMD client, PKCE required, token bound
+    # to the MCP resource). They never mix: see token.py and deps.py.
+    code_challenge: str | None = None
+    code_challenge_method: str | None = None
+    resource: str | None = None
+    if is_mcp_client(client_id):
+        if not is_valid_mcp_redirect(client_id, redirect_uri):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "redirect_uri_not_allowed")
+        code_challenge = params.get("code_challenge")
+        code_challenge_method = params.get("code_challenge_method")
+        if not is_valid_code_challenge(code_challenge, code_challenge_method):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_code_challenge")
+        resource = params.get("resource") or settings.mcp_resource_url
+        if resource != settings.mcp_resource_url:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_target")
+        scope = "read:astro write:query"
+    else:
+        if not hmac.compare_digest(client_id, settings.oauth_client_id):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_client")
+        if not is_valid_chatgpt_redirect(redirect_uri):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "redirect_uri_not_allowed")
     if not chatgpt_state:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing_state")
 
@@ -94,10 +114,12 @@ async def oauth_authorize(request: Request):
         await conn.execute(
             """
             INSERT INTO public.gw_oauth_authz_session
-                (state, client_id, redirect_uri, scope, original_state, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+                (state, client_id, redirect_uri, scope, original_state, expires_at,
+                 code_challenge, code_challenge_method, resource)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             internal_state, client_id, redirect_uri, scope, chatgpt_state, expires_at,
+            code_challenge, code_challenge_method, resource,
         )
 
     qs = urlencode({
@@ -163,7 +185,8 @@ async def oauth_google_callback(request: Request):
     async with pool.acquire() as conn:
         sess = await conn.fetchrow(
             """
-            SELECT redirect_uri, scope, original_state, expires_at
+            SELECT client_id, redirect_uri, scope, original_state, expires_at,
+                   code_challenge, code_challenge_method, resource
               FROM public.gw_oauth_authz_session
              WHERE state = $1
             """,
@@ -236,40 +259,53 @@ async def oauth_google_callback(request: Request):
         await _consume_session(state)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "google_email_unverified")
 
+    # MCP sessions carry a resource; legacy GPT sessions do not.
+    is_mcp = sess["resource"] is not None
+
     # Upsert user + issue one-time oauth_code, then drop the session.
     async with pool.acquire() as conn:
         async with conn.transaction():
             user_row = await conn.fetchrow(
                 """
                 INSERT INTO public.gw_users (email, google_id, name, signup_source, last_seen_at)
-                VALUES ($1, $2, $3, 'gpt', NOW())
+                VALUES ($1, $2, $3, $4, NOW())
                 ON CONFLICT (email) DO UPDATE
                   SET google_id     = COALESCE(public.gw_users.google_id, EXCLUDED.google_id),
                       name          = COALESCE(public.gw_users.name, EXCLUDED.name),
                       last_seen_at  = NOW()
                 RETURNING id
                 """,
-                email, google_id, name,
+                email, google_id, name, "mcp" if is_mcp else "gpt",
             )
 
             oauth_code = secrets.token_urlsafe(48)
             await conn.execute(
                 """
-                INSERT INTO public.gw_oauth_codes (code, user_id, redirect_uri, scope, expires_at)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO public.gw_oauth_codes
+                    (code, user_id, redirect_uri, scope, expires_at,
+                     client_id, code_challenge, code_challenge_method, resource)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """,
                 oauth_code,
                 user_row["id"],
                 sess["redirect_uri"],
                 sess["scope"],
                 datetime.now(tz=timezone.utc) + timedelta(seconds=_OAUTH_CODE_TTL_SECONDS),
+                sess["client_id"] if is_mcp else None,
+                sess["code_challenge"],
+                sess["code_challenge_method"],
+                sess["resource"],
             )
 
             await conn.execute(
                 "DELETE FROM public.gw_oauth_authz_session WHERE state = $1", state,
             )
 
-    qs = urlencode({"code": oauth_code, "state": sess["original_state"]})
+    redirect_params = {"code": oauth_code, "state": sess["original_state"]}
+    if is_mcp:
+        # RFC 9207 issuer identification (advertised in our AS metadata).
+        redirect_params["iss"] = settings.gateway_base_url
+    qs = urlencode(redirect_params)
     response = RedirectResponse(url=f"{sess['redirect_uri']}?{qs}", status_code=302)
     # Clear the state cookie now that the flow is complete.
     response.delete_cookie(_STATE_COOKIE_NAME, path="/oauth")

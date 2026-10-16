@@ -35,6 +35,7 @@ async def require_bearer(
               JOIN public.gw_users u ON u.id = t.user_id
              WHERE t.access_token = $1
                AND t.revoked_at IS NULL
+               AND t.resource IS NULL      -- MCP tokens are not valid for /v1/gpt/*
             """,
             access_token,
         )

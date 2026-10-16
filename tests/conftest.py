@@ -37,3 +37,16 @@ async def _noop_close_pool():  # type: ignore[override]
 
 _db.init_pool = _noop_init_pool  # type: ignore[assignment]
 _db.close_pool = _noop_close_pool  # type: ignore[assignment]
+
+
+# One app lifespan per test session: the MCP session manager can only start once.
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def live_client():
+    from app.main import app
+
+    with TestClient(app, base_url="https://api.askastrobot.com") as client:
+        yield client

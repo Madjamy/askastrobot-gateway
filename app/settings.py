@@ -53,6 +53,17 @@ class Settings(BaseSettings):
     # Observability
     sentry_dsn: str = ""
 
+    # MCP (ChatGPT plugin) endpoint
+    mcp_free_queries: int = 3          # lifetime free chart calls per user across the plugin
+    mcp_dedupe_seconds: int = 120      # identical repeat call within this window is not charged
+    mcp_rate_limit_per_hour: int = 30  # chart calls per user per hour
+    geocoder_user_agent: str = "AskAstroBot/1.0 (+https://askastrobot.com/contact)"
+
+    @property
+    def mcp_resource_url(self) -> str:
+        """Canonical MCP resource identifier (RFC 8707 / RFC 9728)."""
+        return f"{self.gateway_base_url}/mcp"
+
     @property
     def n8n_url_for_bot(self) -> dict[str, str]:
         return {

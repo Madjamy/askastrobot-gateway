@@ -135,6 +135,7 @@ async def gpt_query(
                      WHERE user_id = $1
                        AND bot_slug = $2
                        AND was_paid_query = FALSE
+                       AND channel = 'gpt'      -- plugin (MCP) usage has its own quota
                     """,
                     user.user_id, bot_slug,
                 )
