@@ -294,7 +294,15 @@ def compact_chart(n8n_output: Any, *, chart_type: str) -> dict[str, Any]:
     kundali = _find_kundali(blocks)
     lagna = build_lagna(kundali)
     planets = build_planets(kundali, _extended_flags(blocks))
-    missing = [g for g in GRAHAS if g not in planets or not isinstance(planets[g].get("house"), int)]
+    missing = [
+        g for g in GRAHAS
+        if g not in planets
+        or not isinstance(planets[g].get("house"), int)
+        or not 1 <= planets[g]["house"] <= 12
+        or planets[g].get("deg") is None
+    ]
+    if lagna.get("deg") is None:
+        missing.append("Ascendant degree")
     if missing:
         # Never charge for an incomplete chart.
         raise PayloadError(f"chart incomplete, missing: {', '.join(missing)}")

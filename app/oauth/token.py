@@ -183,6 +183,17 @@ async def _refresh(presented_refresh: str, *, mcp_client_id: str | None = None) 
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Serialise rotation and replay-revocation for this user+client, so a
+            # successor minted concurrently cannot escape a replay revocation.
+            owner = await conn.fetchval(
+                "SELECT user_id FROM public.gw_oauth_tokens WHERE refresh_token = $1",
+                presented_refresh,
+            )
+            if owner is not None:
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"refresh:{owner}:{mcp_client_id or 'gpt'}",
+                )
             # Atomic claim: revoke an active token only if it's still active.
             row = await conn.fetchrow(
                 """

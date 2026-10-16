@@ -160,13 +160,16 @@ async def _charged_chart(
             forward_to_n8n(bot_slug, body, "application/json"), timeout=_BACKEND_DEADLINE_SECONDS,
         )
         chart = compact_chart(json.loads(raw), chart_type=chart_type)
-    except Exception as exc:
+    except BaseException as exc:
+        # Includes cancellation (client went away): never keep the reservation.
         log.error("mcp.backend_failed", tool=tool, error=type(exc).__name__)
         try:
-            await entitlement.release(decision.reservation_id)
-        except Exception:
+            await asyncio.shield(entitlement.release(decision.reservation_id))
+        except BaseException:
             log.error("mcp.release_failed", tool=tool)
-        raise ToolError(_UNAVAILABLE) from None
+        if isinstance(exc, Exception):
+            raise ToolError(_UNAVAILABLE) from None
+        raise
 
     try:
         await entitlement.complete(decision.reservation_id, elapsed_ms)

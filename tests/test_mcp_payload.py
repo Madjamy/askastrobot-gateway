@@ -87,3 +87,14 @@ def test_helpers() -> None:
     assert m["summary"] == "Not Manglik"
     m = manglik("Gemini", {"Mars": {"sign": "Aries"}, "Moon": {"sign": "Libra"}, "Venus": {"sign": "Leo"}})
     assert m["from_moon"] is True and m["summary"].startswith("Mild Manglik")
+
+
+def test_invalid_house_or_missing_degree_rejected() -> None:
+    raw = _load("n8n_horoscope_sample.json")
+    raw[0]["data"][0]["output"]["Mars"]["house_number"] = 99
+    with pytest.raises(PayloadError):
+        compact_chart(raw, chart_type="natal")
+    raw = _load("n8n_horoscope_sample.json")
+    raw[0]["data"][0]["output"]["Venus"]["normDegree"] = None
+    with pytest.raises(PayloadError):
+        compact_chart(raw, chart_type="natal")
