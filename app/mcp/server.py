@@ -2,9 +2,9 @@
 
 Tools: get_prashna_chart, get_birth_chart (+ topic vargas, Ashtakavarga and Moon
 chart for a general reading), get_divisional_chart, get_transits, get_account.
-Main charts come from the existing n8n workflows (same webhooks as the Custom
-GPTs); extra vargas and transit positions come from the astrology API. Nothing
-about a chart is stored. Errors use the codes the master skill expects:
+All chart data comes directly from the astrology API (n8n is no longer used;
+its rules are ported in app/mcp/rules.py). Gochar comes from the shared transit
+table. Nothing about a person's chart is stored. Errors use the codes the master skill expects:
 INVALID_INPUT, AMBIGUOUS_PLACE, INSUFFICIENT_CREDITS, RATE_LIMITED, BACKEND_UNAVAILABLE.
 """
 from __future__ import annotations
@@ -27,12 +27,11 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from app.db import get_pool
-from app.gpt.n8n import N8nForwardError, forward_to_n8n
 from app.logging_setup import get_logger
-from app.mcp import astro_api, enrich, entitlement, transits
+from app.mcp import astro_api, enrich, entitlement, natal, transit_table
 from app.mcp.geo import (GeoError, NonexistentLocalTime, Place, checked_offset_hours, now_in, resolve_place,
                          utc_offset_hours)
-from app.mcp.payload import PayloadError, compact_chart
+from app.mcp.payload import GRAHAS, PayloadError, sign_name
 from app.settings import get_settings
 
 log = get_logger(__name__)
@@ -140,16 +139,6 @@ def _parse_local(date_str: str, time_str: str) -> datetime:
     return local
 
 
-def _n8n_body(local: datetime, lat: float, lon: float, offset: float, query_type: str) -> bytes:
-    # Same fields the Custom GPT Actions send. No question text is forwarded.
-    return json.dumps({
-        "year": local.year, "month": local.month, "day": local.day,
-        "hours": local.hour, "minutes": local.minute,
-        "latitude": round(lat, 4), "longitude": round(lon, 4), "timezone": offset,
-        "query_type": query_type, "query_text": f"[plugin] {query_type}",
-    }).encode()
-
-
 @dataclass(frozen=True)
 class Birth:
     date: str
@@ -166,9 +155,6 @@ class Birth:
 
     def api_body(self) -> dict[str, Any]:
         return astro_api.birth_body(self.local, self.place.latitude, self.place.longitude, self.offset)
-
-    def n8n_body(self, query_type: str) -> bytes:
-        return _n8n_body(self.local, self.place.latitude, self.place.longitude, self.offset, query_type)
 
     def summary(self) -> dict[str, Any]:
         out = {"date": self.date, "time": self.time, "place": self.place.name,
@@ -192,11 +178,6 @@ async def _resolve_birth(birth_date: str, birth_time: str, birth_place: str) -> 
             "Please check the time with the user."
         ) from exc
     return Birth(birth_date, birth_time, local, place, offset, ambiguous)
-
-
-async def _n8n_chart(bot_slug: str, body: bytes, chart_type: str) -> tuple[dict[str, Any], int]:
-    raw, _ct, elapsed_ms = await forward_to_n8n(bot_slug, body, "application/json")
-    return compact_chart(json.loads(raw), chart_type=chart_type), elapsed_ms
 
 
 async def _charged(
@@ -246,6 +227,28 @@ async def _charged(
     return result
 
 
+def dasha_running(table: dict[str, Any], day: date) -> dict[str, str] | None:
+    """Maha/Antar dasha running on `day`, with its boundaries."""
+    iso = day.isoformat()
+    for md, antars in (table or {}).items():
+        for ad, period in antars.items():
+            s, e = str(period.get("start_time", ""))[:10], str(period.get("end_time", ""))[:10]
+            if s and e and s <= iso < e:
+                return {"running": f"{md} / {ad}", "from": s, "to": e}
+    return None
+
+
+def dasha_changes(table: dict[str, Any], start: date, end: date) -> list[dict[str, str]]:
+    """Maha/Antar dasha changes inside [start, end] from the API's dasha table."""
+    out = []
+    for md, antars in (table or {}).items():
+        for ad, period in antars.items():
+            s = str(period.get("start_time", ""))[:10]
+            if s and start.isoformat() < s <= end.isoformat():
+                out.append({"date": s, "to": f"{md} / {ad}"})
+    return sorted(out, key=lambda x: x["date"])
+
+
 def _timed(coro_factory: Callable[[], Awaitable[dict[str, Any]]]) -> Callable[[], Awaitable[tuple[dict[str, Any], int]]]:
     async def run() -> tuple[dict[str, Any], int]:
         t0 = time.perf_counter()
@@ -292,11 +295,11 @@ def build_server() -> MCPServer:
             raise _geo_error(exc) from exc
         local = now_in(place.tz_name)
         offset = utc_offset_hours(place.tz_name, local)
-        body = _n8n_body(local, place.latitude, place.longitude, offset, query_type)
+        deadline = time.monotonic() + _BACKEND_DEADLINE_SECONDS
         chart = await _charged(
             tool="get_prashna_chart", bot_slug="prashna", query_type=query_type,
             hash_inputs={"lat": round(place.latitude, 4), "lon": round(place.longitude, 4), "qt": query_type},
-            work=lambda: _n8n_chart("prashna", body, "prashna"),
+            work=_timed(lambda: natal.prashna_chart(local, place.latitude, place.longitude, offset, deadline)),
         )
         chart["moment"] = f"{local:%Y-%m-%d %H:%M} (UTC{offset:+g})"
         chart["place"] = place.name
@@ -323,11 +326,13 @@ def build_server() -> MCPServer:
 
         async def work() -> tuple[dict[str, Any], int]:
             t0 = time.perf_counter()
-            chart, elapsed_ms = await _n8n_chart("horoscope", birth.n8n_body(query_type), "natal")
+            deadline = time.monotonic() + _BACKEND_DEADLINE_SECONDS - 12.0   # leave room for enrichment
+            chart = await natal.birth_chart(birth.local, birth.place.latitude, birth.place.longitude,
+                                            birth.offset, deadline)
             remaining = _BACKEND_DEADLINE_SECONDS - (time.perf_counter() - t0) - 2.0
             await enrich.add_topic_charts(chart, query_type, birth.api_body(),
                                           timeout=max(1.0, min(_ENRICH_MAX_SECONDS, remaining)))
-            return chart, elapsed_ms
+            return chart, int((time.perf_counter() - t0) * 1000)
 
         chart = await _charged(
             tool="get_birth_chart", bot_slug="horoscope", query_type=query_type,
@@ -404,21 +409,34 @@ def build_server() -> MCPServer:
             raise ToolError("INVALID_INPUT: Use dates as YYYY-MM-DD.") from exc
         if end is not None and (end < start or (end - start).days > 731):
             raise ToolError("INVALID_INPUT: The period must end after it starts and be at most 24 months.")
+        try:
+            tbl = await transit_table.load()
+            tbl.require(datetime(start.year, start.month, start.day),
+                        datetime((end or start).year, (end or start).month, (end or start).day, 23, 59))
+        except transit_table.TransitDataMissing as exc:
+            raise ToolError(f"INVALID_INPUT: Transit data is available for {str(exc).split('covers ', 1)[-1]}. "
+                            "Please choose dates in that range.") from None
+        except Exception as exc:
+            log.error("mcp.transit_table_failed", error=type(exc).__name__)
+            raise ToolError(_UNAVAILABLE) from None
 
-        async def work() -> tuple[dict[str, Any], int]:
-            natal, elapsed_ms = await _n8n_chart("horoscope", birth.n8n_body("general"), "natal")
-            k = natal["Janam Kundali"]
-            result = await transits.build(
-                fetch=transits.transit_fetcher(birth.place.latitude, birth.place.longitude),
-                lagna_sign=k["lagna"]["sign"], moon_sign=k["moon"]["sign"],
-                dasha_table=natal.get("Maha Dasha Antar Dasha"), start=start, end=end,
-            )
-            return result, elapsed_ms
+        async def work() -> dict[str, Any]:
+            deadline = time.monotonic() + _BACKEND_DEADLINE_SECONDS
+            kundali, dasha_tbl = await natal.natal_reference(
+                birth.local, birth.place.latitude, birth.place.longitude, birth.offset, deadline)
+            table = await transit_table.load()
+            planets = {p: sign_name(kundali[p]["current_sign"]) for p in GRAHAS}
+            result = transit_table.transits_window(
+                table, lagna=sign_name(kundali["Ascendant"]["current_sign"]), moon=planets["Moon"],
+                natal_planets=planets, start=start, end=end or start)
+            result["dasha_at_start"] = dasha_running(dasha_tbl, start)
+            result["dasha_changes"] = dasha_changes(dasha_tbl, start, end or start)
+            return result
 
         result = await _charged(
             tool="get_transits", bot_slug="horoscope", query_type="transit",
             hash_inputs={**birth.hash_inputs(), "from": from_date, "to": to_date},
-            work=work, subject=birth.hash_inputs(), follow_up_ok=True,
+            work=_timed(work), subject=birth.hash_inputs(), follow_up_ok=True,
         )
         result["birth"] = birth.summary()
         return result

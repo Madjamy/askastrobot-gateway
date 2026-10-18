@@ -96,7 +96,8 @@ async def add_topic_charts(
             else:
                 missing.append("Shadbala")
     if missing:
-        chart["unavailable_charts"] = missing
+        merged = chart.get("unavailable_charts", []) + [m for m in missing if m not in chart.get("unavailable_charts", [])]
+        chart["unavailable_charts"] = merged
 
     kundali = chart.get("Janam Kundali") or {}
     planets = kundali.get("planets") or {}

@@ -61,7 +61,8 @@ class Settings(BaseSettings):
     # freeastrologyapi.com (extra divisional charts, chart images, transits)
     freeastrology_api_key: str = ""
     astro_api_concurrency: int = 3
-    astro_api_observation_point: Literal["topocentric", "geocentric"] = "topocentric"
+    astro_api_min_interval: float = 0.35        # seconds between call starts (plan rate limit)
+    astro_api_observation_point: Literal["topocentric", "geocentric"] = "geocentric"   # as n8n for vargas/dashas
 
     # MCP (ChatGPT plugin) endpoint
     mcp_free_queries: int = 3          # lifetime free chart calls per user across the plugin

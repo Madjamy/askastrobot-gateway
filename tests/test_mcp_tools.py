@@ -1,18 +1,33 @@
-"""End-to-end MCP calls through the mounted /mcp app (DB, n8n and geocoder faked)."""
+"""End-to-end MCP calls through the mounted /mcp app.
+
+DB and geocoder are faked; the astrology API is faked with the REAL responses
+captured for the Owner's chart (tests/fixtures/api_owner_chart_raw.json:
+21 May 1982 12:38 Delhi, Leo Lagna, Aries Moon); the transit table is synthetic.
+"""
 from __future__ import annotations
 
+import copy
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import app.mcp.astro_api as api
 import app.mcp.entitlement as ent
 import app.mcp.server as srv
+import app.mcp.transit_table as tt
 from app.mcp.geo import Place
+from tests.transit_fakes import make_table
 
 BASE = "https://api.askastrobot.com"
 FIX = Path(__file__).parent / "fixtures"
+RAW = json.loads((FIX / "api_owner_chart_raw.json").read_text())
+
+
+def _out(key):
+    o = RAW[key]["output"]
+    return json.loads(o) if isinstance(o, str) else o
 HEADERS = {"Authorization": "Bearer good-token", "Accept": "application/json, text/event-stream"}
 
 
@@ -78,8 +93,8 @@ class FakePool:
 
 @pytest.fixture
 def state(monkeypatch):
-    s = {"recent": 0, "duplicate": None, "follow_up": None, "sub": None, "free_used": 0, "inserted": [], "n8n_bodies": [],
-         "released": [], "completed": [], "n8n_file": "n8n_horoscope_sample.json"}
+    s = {"recent": 0, "duplicate": None, "follow_up": None, "sub": None, "free_used": 0, "inserted": [],
+         "released": [], "completed": [], "api_calls": [], "api_down": False, "kundali_override": None}
     pool = FakePool(s)
     monkeypatch.setattr(srv, "get_pool", lambda: pool)
     monkeypatch.setattr(ent, "get_pool", lambda: pool)
@@ -87,17 +102,40 @@ def state(monkeypatch):
     async def fake_place(q):
         return Place(name="Delhi, India", latitude=28.6139, longitude=77.209, tz_name="Asia/Kolkata")
 
-    async def fake_n8n(bot, body, ct):
-        s["n8n_bodies"].append((bot, json.loads(body)))
-        if s["n8n_file"] is None:
-            from app.gpt.n8n import N8nForwardError
-            raise N8nForwardError("down", kind="network")
-        if isinstance(s["n8n_file"], bytes):
-            return s["n8n_file"], "application/json", 10
-        return (FIX / s["n8n_file"]).read_bytes(), "application/json", 1234
+    async def kundali(body, deadline=None):
+        s["api_calls"].append(("kundali", body))
+        if s["api_down"]:
+            raise api.AstroApiError("planets/extended: HTTP 503")
+        return s["kundali_override"] or copy.deepcopy(_out("planets_extended"))
 
+    async def varga_raw(chart, body, deadline=None):
+        s["api_calls"].append((chart, body))
+        return {"D9": _out("navamsa"), "D10": _out("d10")}[chart]
+
+    async def varga(chart, body, deadline=None):          # topic vargas: unavailable unless a test overrides
+        raise api.AstroApiError("not in fixture")
+
+    async def dasha_table(body, deadline=None):
+        s["api_calls"].append(("dasha_table", body))
+        return _out("maha_antar")
+
+    async def dasha_now(body, event, lat, lon, offset, deadline=None):
+        s["api_calls"].append(("dasha_now", body))
+        return _out("dasa_info")
+
+    async def shadbala(body, deadline=None):
+        raise api.AstroApiError("not in fixture")
+
+    table = make_table()
+
+    async def load(force=False):
+        return table
+
+    for name, fn in (("kundali", kundali), ("varga_raw", varga_raw), ("varga", varga), ("dasha_table", dasha_table),
+                     ("dasha_now", dasha_now), ("shadbala", shadbala)):
+        monkeypatch.setattr(api, name, fn)
+    monkeypatch.setattr(tt, "load", load)
     monkeypatch.setattr(srv, "resolve_place", fake_place)
-    monkeypatch.setattr(srv, "forward_to_n8n", fake_n8n)
     return s
 
 
@@ -111,7 +149,7 @@ def _result(resp):
     return resp.json()["result"]
 
 
-BIRTH = {"birth_date": "1990-07-06", "birth_time": "14:30", "birth_place": "Delhi, India", "query_type": "career"}
+BIRTH = {"birth_date": "1982-05-21", "birth_time": "12:38", "birth_place": "Delhi, India", "query_type": "career"}
 
 
 def test_tools_listed_with_annotations(state, live_client) -> None:
@@ -133,15 +171,23 @@ def test_birth_chart_free_call(state, live_client) -> None:
         res = _result(_call(client, "get_birth_chart", BIRTH))
     assert not res.get("isError")
     chart = res["structuredContent"]
-    assert chart["Janam Kundali"]["lagna"]["sign"] == "Libra"
+    assert chart["Janam Kundali"]["lagna"]["sign"] == "Leo"
     assert chart["birth"]["utc_offset"] == "UTC+5.5"
     assert chart["account_note"] == "Free questions left: 2"
-    bot, body = state["n8n_bodies"][0]
-    assert bot == "horoscope" and body["timezone"] == 5.5 and body["hours"] == 14
-    assert body["query_text"] == "[plugin] career"            # never the user's question
+    assert chart["Yoga Detection"] == ["Budha-Aditya Yoga: Sun and Mercury in same sign",
+                                       "Parivartan Yoga: Jupiter and Venus are in mutual sign exchange"]
+    assert chart["Current Dasha"]["md"].startswith("Mars")
+    g = chart["Current Transit / Gochar"]
+    assert g["Saturn"]["where"] == "Pisces, H8 / M12" and g["Saturn"]["over_natal"] == ["Venus"]
+    assert g["Shani Sade Sathi, Dhaiya, Kantak Shani"]["now"]["sade_sathi"] == "Yes - 1st Phase"
+    assert chart["Shani Sade Sathi, Dhaiya, Kantak Shani"]["sade_sathi"] == "Yes - 1st Phase"
+    calls = dict((name, body) for name, body in state["api_calls"])
+    assert calls["kundali"]["settings"]["observation_point"] == "topocentric"        # as n8n
+    assert calls["D9"]["config"]["observation_point"] == "geocentric"                # as n8n
+    assert calls["kundali"]["hours"] == 12 and calls["kundali"]["timezone"] == 5.5
     (row,) = state["inserted"]
     assert row[2] == "horoscope" and row[4] is False and row[7] is False   # bot, was_paid, is_repeat
-    assert state["completed"] == [(1, 1234)] and state["released"] == []
+    assert state["completed"][0][0] == 1 and state["released"] == []
 
 
 def test_quota_exhausted_is_neutral_and_uncharged(state, live_client) -> None:
@@ -155,7 +201,7 @@ def test_quota_exhausted_is_neutral_and_uncharged(state, live_client) -> None:
     message = text.split("INSUFFICIENT_CREDITS:", 1)[1].lower()
     for word in ("$", "buy", "upgrade", "price", "subscribe"):
         assert word not in message
-    assert state["n8n_bodies"] == [] and state["inserted"] == []
+    assert state["api_calls"] == [] and state["inserted"] == []
 
 
 def test_duplicate_is_logged_as_repeat(state, live_client) -> None:
@@ -181,7 +227,7 @@ def test_invalid_input(state, live_client) -> None:
     if True:
         res = _result(_call(client, "get_birth_chart", {**BIRTH, "birth_date": "1990-02-30"}))
     assert "INVALID_INPUT:" in res["content"][0]["text"]
-    assert state["n8n_bodies"] == []
+    assert state["api_calls"] == []
 
 
 def test_gpt_token_rejected_at_mcp(state, live_client) -> None:
@@ -193,16 +239,16 @@ def test_gpt_token_rejected_at_mcp(state, live_client) -> None:
 
 
 def test_backend_failure_releases_reservation(state, live_client) -> None:
-    state["n8n_file"] = None
+    state["api_down"] = True
     res = _result(_call(live_client, "get_birth_chart", BIRTH))
     assert "BACKEND_UNAVAILABLE:" in res["content"][0]["text"]
     assert len(state["inserted"]) == 1 and state["released"] == [1]
 
 
 def test_incomplete_chart_not_charged(state, live_client) -> None:
-    raw = json.loads((FIX / "n8n_horoscope_sample.json").read_text())
-    del raw[0]["data"][0]["output"]["Saturn"]
-    state["n8n_file"] = json.dumps(raw).encode()
+    k = copy.deepcopy(_out("planets_extended"))
+    del k["Saturn"]
+    state["kundali_override"] = k
     res = _result(_call(live_client, "get_birth_chart", BIRTH))
     assert "BACKEND_UNAVAILABLE:" in res["content"][0]["text"]
     assert state["released"] == [1]
@@ -222,17 +268,17 @@ def test_dst_gap_rejected(state, live_client, monkeypatch) -> None:
 def test_general_reading_adds_shadbala_and_moon_chart(state, live_client, monkeypatch) -> None:
     import app.mcp.astro_api as api
 
-    async def sb(body):
+    async def sb(body, deadline=None):
         return {p: {"rupas": 6.0, "strength_pct": 110.0, "ishta": 30.0, "kashta": 10.0}
                 for p in ("Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn")}
     monkeypatch.setattr(api, "shadbala", sb)
     chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))["structuredContent"]
     assert chart["Shadbala"]["planets"]["Sun"]["rupas"] == 6.0
     assert "Ashtakavarga" not in chart
-    assert chart["Moon Chart (Chandra Lagna)"]["lagna"] == "Taurus"
-    assert "unavailable_charts" not in chart          # D9/D10 already in the n8n bundle
+    assert chart["Moon Chart (Chandra Lagna)"]["lagna"] == "Aries"
+    assert "unavailable_charts" not in chart          # D9/D10 already in the main chart
 
-    async def down(body):
+    async def down(body, deadline=None):
         raise api.AstroApiError("down")
     monkeypatch.setattr(api, "shadbala", down)
     chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))["structuredContent"]
@@ -242,14 +288,11 @@ def test_general_reading_adds_shadbala_and_moon_chart(state, live_client, monkey
 def test_children_topic_adds_d7_or_reports_unavailable(state, live_client, monkeypatch) -> None:
     import app.mcp.astro_api as api
 
-    async def no_key(chart, body):
-        raise api.AstroApiError("API key not configured")
-    monkeypatch.setattr(api, "varga", no_key)
     chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "children"}))["structuredContent"]
     assert chart["unavailable_charts"] == ["D7"]
-    assert chart["Janam Kundali"]["lagna"]["sign"] == "Libra"        # main chart still returned
+    assert chart["Janam Kundali"]["lagna"]["sign"] == "Leo"          # main chart still returned
 
-    async def d7(chart, body):
+    async def d7(chart, body, deadline=None):
         return [{"name": n, "current_sign": i + 1, "house_number": i + 1} for i, n in enumerate(
             ["Ascendant", "Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"])]
     monkeypatch.setattr(api, "varga", d7)
@@ -260,7 +303,7 @@ def test_children_topic_adds_d7_or_reports_unavailable(state, live_client, monke
 def test_divisional_chart_follow_up_is_not_counted(state, live_client, monkeypatch) -> None:
     import app.mcp.astro_api as api
 
-    async def d60(chart, body):
+    async def d60(chart, body, deadline=None):
         return [{"name": n, "current_sign": 5, "house_number": 1} for n in
                 ["Ascendant", "Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]]
     monkeypatch.setattr(api, "varga", d60)
@@ -281,22 +324,23 @@ def test_divisional_chart_without_prior_question_needs_quota(state, live_client)
     assert "INSUFFICIENT_CREDITS:" in res["content"][0]["text"]
 
 
-def test_transits_period(state, live_client, monkeypatch) -> None:
-    import app.mcp.astro_api as api
-
-    async def planets(body):
-        assert body["config"]["observation_point"] == "geocentric"
-        sat = "Pisces" if (body["month"], body["date"]) < (3, 10) else "Aries"
-        return {"Sun": ("Leo", False), "Moon": ("Libra", False), "Mars": ("Cancer", False),
-                "Mercury": ("Libra", False), "Jupiter": ("Cancer", False), "Venus": ("Libra", True),
-                "Saturn": (sat, False), "Rahu": ("Aquarius", False), "Ketu": ("Leo", False)}
-    monkeypatch.setattr(api, "planet_signs", planets)
-    args = {**{k: v for k, v in BIRTH.items() if k != "query_type"}, "from_date": "2027-01-01", "to_date": "2027-06-01"}
+def test_transits_period(state, live_client) -> None:
+    today = datetime.now(timezone.utc).date()
+    args = {**{k: v for k, v in BIRTH.items() if k != "query_type"},
+            "from_date": today.isoformat(), "to_date": (today + timedelta(days=400)).isoformat()}
     res = _result(_call(live_client, "get_transits", args))
+    assert not res.get("isError"), res
     out = res["structuredContent"]
-    assert len(out["snapshots"]) == 6
-    (ing,) = out["ingress"]
-    assert (ing["date"], ing["planet"], ing["enters"], ing["from_lagna"], ing["from_moon"]) == (
-        "2027-03-10", "Saturn", "Aries", 7, 12)
-    assert out["snapshots"][3]["sade_sathi"] == "Yes – 1st Phase"      # Saturn 12th from Taurus Moon
-    assert out["snapshots"][0]["planets"]["Saturn"] == "Pisces (6/11)"
+    assert out["houses"].startswith("H = house from Lagna (Leo)")
+    sat = out["Saturn"]["periods"]
+    assert sat[0]["where"] == "Pisces, H8 / M12" and sat[-1]["where"].startswith("Aries, H9 / M1")
+    assert {"date": "2027-03-14", "to": "Rahu / Rahu"} in out["dasha_changes"]
+    assert [c[0] for c in state["api_calls"]] in (["kundali", "dasha_table"], ["dasha_table", "kundali"])   # 2 calls only
+
+
+def test_prashna_uses_two_calls(state, live_client) -> None:
+    res = _result(_call(live_client, "get_prashna_chart", {"city_country": "Delhi, India", "query_type": "career"}))
+    assert not res.get("isError"), res
+    chart = res["structuredContent"]
+    assert chart["Prashna Kundali"]["lagna"]["sign"] == "Leo" and chart["moment"]
+    assert sorted(c[0] for c in state["api_calls"]) == ["dasha_now", "kundali"]

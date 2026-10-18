@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime
 
-from app.mcp import ashtakavarga, shani, transits
+from app.mcp import ashtakavarga, shani
 from app.mcp.astro_api import _rows
 from app.mcp.payload import SIGNS, moon_chart, varga_compact
 
@@ -29,11 +29,12 @@ def test_ashtakavarga_house_rotation() -> None:
 
 
 def test_shani_status() -> None:
-    assert shani.status("Taurus", "Aries") == {"sade_sathi": "Yes – 1st Phase", "dhaiya": "No", "kantak_shani": "No"}
-    assert shani.status("Taurus", "Taurus")["sade_sathi"] == "Yes – 2nd Phase"
-    assert shani.status("Taurus", "Gemini")["sade_sathi"] == "Yes – 3rd Phase"
-    assert shani.status("Taurus", "Leo") == {"sade_sathi": "No", "dhaiya": "Yes", "kantak_shani": "Yes"}   # 4th
-    assert shani.status("Taurus", "Aquarius")["kantak_shani"] == "Yes"                                       # 10th
+    assert shani.status("Taurus", "Aries") == {"sade_sathi": "Yes - 1st Phase", "dhaiya": "No", "kantak_shani": "No"}
+    assert shani.status("Taurus", "Taurus")["sade_sathi"] == "Yes - 2nd Phase"
+    assert shani.status("Taurus", "Gemini")["sade_sathi"] == "Yes - 3rd Phase"
+    assert shani.status("Taurus", "Leo") == {"sade_sathi": "No", "dhaiya": "Yes - 4th from Moon (Dhaiya)", "kantak_shani": "No"}    # 4th
+    assert shani.status("Taurus", "Sagittarius") == {"sade_sathi": "No", "dhaiya": "No", "kantak_shani": "Yes - 8th from Moon (Kantak Shani)"}  # 8th
+    assert shani.status("Taurus", "Aquarius")["kantak_shani"] == "No"                                        # 10th: not Kantak
     assert shani.status("Taurus", "Pisces") == {"sade_sathi": "No", "dhaiya": "No", "kantak_shani": "No"}  # n8n sample
 
 
@@ -54,42 +55,10 @@ def test_moon_chart() -> None:
     assert mc["houses"]["1"]["occupants"] == ["Moon", "Venus"] and mc["houses"]["4"]["occupants"] == ["Mars"]
 
 
-def test_month_dates_and_dasha() -> None:
-    assert len(transits.month_dates(date(2026, 10, 31), date(2028, 12, 31))) == 24          # capped
-    assert transits.month_dates(date(2026, 10, 31), date(2026, 12, 1)) == [date(2026, 10, 31), date(2026, 11, 28)]
-    table = {"Jupiter": [["Mercury", "2025-05-01", "2027-08-06"], ["Ketu", "2027-08-06", "2028-07-12"]]}
-    assert transits.dasha_at(table, date(2027, 8, 6)) == "Jupiter / Ketu"
-    assert transits.dasha_changes(table, date(2027, 1, 1), date(2027, 12, 31)) == [{"date": "2027-08-06", "to": "Jupiter / Ketu"}]
-
-
-def test_rahu_ingress_mirrors_ketu() -> None:
-    async def fetch(t):
-        rahu, ketu = ("Aquarius", "Leo") if t < datetime(2027, 2, 15, 18, 20) else ("Capricorn", "Cancer")
-        base = {g: ("Aries", False) for g in ("Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn")}
-        return {**base, "Rahu": (rahu, False), "Ketu": (ketu, False)}
-    out = asyncio.run(transits.build(fetch=fetch, lagna_sign="Libra", moon_sign="Taurus", dasha_table=None,
-                                     start=date(2027, 1, 1), end=date(2027, 3, 1)))
-    assert [(i["planet"], i["date"], i["enters"]) for i in out["ingress"]] == [
-        ("Rahu", "2027-02-15", "Capricorn"), ("Ketu", "2027-02-15", "Cancer")]   # 18:20 UTC, not the next noon
-    h, m = map(int, out["ingress"][0]["time_utc"].split(":"))
-    assert abs((h * 60 + m) - (18 * 60 + 20)) <= 15             # within 15 minutes of the true change
-
-
-def test_ingress_after_last_snapshot_is_found() -> None:
-    async def fetch(t):
-        sat = "Pisces" if t < datetime(2027, 1, 15, 3, 0) else "Aries"
-        base = {g: ("Taurus", False) for g in ("Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Rahu", "Ketu")}
-        return {**base, "Saturn": (sat, False)}
-    out = asyncio.run(transits.build(fetch=fetch, lagna_sign="Libra", moon_sign="Taurus", dasha_table=None,
-                                     start=date(2027, 1, 1), end=date(2027, 1, 31)))
-    assert len(out["snapshots"]) == 1
-    assert out["ingress"][0]["date"] == "2027-01-15" and out["ingress"][0]["planet"] == "Saturn"
-
-
 def test_shadbala_parsing(monkeypatch) -> None:
     from app.mcp import astro_api
 
-    async def fake_post(endpoint, body):
+    async def fake_post(endpoint, body, **kw):
         assert endpoint == "shadbala/summary"
         return {"Sun": {"Shadbala": 559.5, "rupas": 9.325, "percentage_strength": 186.501, "ishta_phala": 50.597,
                         "kashta_phala": 9.378},
