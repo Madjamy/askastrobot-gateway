@@ -72,3 +72,18 @@ def test_transits_window_periods_and_moon_rule() -> None:
     assert w["Shani Sade Sathi, Dhaiya, Kantak Shani"][0]["sade_sathi"] == "Yes - 1st Phase"
     short = transits_window(t, lagna="Leo", moon="Aries", natal_planets=natal, start=start, end=start + timedelta(days=3))
     assert len(short["Moon"]["periods"]) >= 1
+
+
+def test_load_covering_reloads_stale_cache(monkeypatch) -> None:
+    import asyncio
+    import app.mcp.transit_table as tt
+    short, full = make_table(days=30), make_table(days=900)
+    calls = []
+
+    async def fake_load(force=False):
+        calls.append(force)
+        return full if force else short
+    monkeypatch.setattr(tt, "load", fake_load)
+    start = datetime.combine(full.days[100], datetime.min.time())
+    got = asyncio.run(tt.load_covering(start, start + timedelta(days=200)))
+    assert got is full and calls == [False, True]

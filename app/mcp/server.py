@@ -410,9 +410,10 @@ def build_server() -> MCPServer:
         if end is not None and (end < start or (end - start).days > 731):
             raise ToolError("INVALID_INPUT: The period must end after it starts and be at most 24 months.")
         try:
-            tbl = await transit_table.load()
-            tbl.require(datetime(start.year, start.month, start.day),
-                        datetime((end or start).year, (end or start).month, (end or start).day, 23, 59))
+            win = (datetime(start.year, start.month, start.day),
+                   datetime((end or start).year, (end or start).month, (end or start).day, 23, 59))
+            tbl = await transit_table.load_covering(*win)
+            tbl.require(*win)
         except transit_table.TransitDataMissing as exc:
             raise ToolError(f"INVALID_INPUT: Transit data is available for {str(exc).split('covers ', 1)[-1]}. "
                             "Please choose dates in that range.") from None
@@ -424,7 +425,7 @@ def build_server() -> MCPServer:
             deadline = time.monotonic() + _BACKEND_DEADLINE_SECONDS
             kundali, dasha_tbl = await natal.natal_reference(
                 birth.local, birth.place.latitude, birth.place.longitude, birth.offset, deadline)
-            table = await transit_table.load()
+            table = tbl
             planets = {p: sign_name(kundali[p]["current_sign"]) for p in GRAHAS}
             result = transit_table.transits_window(
                 table, lagna=sign_name(kundali["Ascendant"]["current_sign"]), moon=planets["Moon"],

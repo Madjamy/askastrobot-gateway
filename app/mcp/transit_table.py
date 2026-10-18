@@ -40,7 +40,7 @@ SLOW = ("Saturn", "Jupiter", "Rahu", "Ketu")
 HORIZON_DAYS = {"Saturn": 730, "Jupiter": 730, "Rahu": 730, "Ketu": 730, "Mars": 180,
                 "Sun": 92, "Mercury": 92, "Venus": 92}
 MAX_NEXT = {"Saturn": 2, "Jupiter": 3, "Rahu": 2, "Ketu": 2, "Mars": 4, "Sun": 3, "Mercury": 4, "Venus": 3}
-_CACHE_TTL = 3600
+_CACHE_TTL = 900
 
 
 class TransitDataMissing(Exception):
@@ -187,6 +187,15 @@ async def load(force: bool = False) -> Table:
     rows = {d: v for d, v in rows.items() if all(g in v for g in GRAHAS)}
     table = Table(days=sorted(rows), rows=rows)
     _cache.update(table=table, at=time.monotonic())
+    return table
+
+
+async def load_covering(start: datetime, end: datetime) -> Table:
+    """Cached table, reloaded once if the cached copy doesn't cover [start, end]
+    (e.g. it was cached while the table was still being filled)."""
+    table = await load()
+    if not table.covers(start, end):
+        table = await load(force=True)
     return table
 
 

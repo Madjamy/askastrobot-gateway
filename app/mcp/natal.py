@@ -112,7 +112,8 @@ async def prashna_raw(moment: datetime, lat: float, lon: float, offset: float,
 async def gochar_for(kundali: dict[str, Any]) -> dict[str, Any] | None:
     """Personalised current transits from the shared table; None if the table isn't available."""
     try:
-        table = await transit_table.load()
+        now = transit_table.now_utc()
+        table = await transit_table.load_covering(now, now + timedelta(days=1))
         natal = {p: sign_name(kundali[p]["current_sign"]) for p in GRAHAS if isinstance(kundali.get(p), dict)}
         return transit_table.personal_gochar(
             table, lagna=sign_name(kundali["Ascendant"]["current_sign"]),
