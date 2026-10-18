@@ -130,6 +130,24 @@ async def chart_image_url(chart: str, body: dict[str, Any]) -> str | None:
     return None
 
 
+async def shadbala(body: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """Shadbala summary for the 7 planets: rupas, strength % of the classical minimum, Ishta/Kashta phala."""
+    out = await _post("shadbala/summary", body)
+    result: dict[str, dict[str, float]] = {}
+    if isinstance(out, dict):
+        for planet, v in out.items():
+            if planet in GRAHAS and isinstance(v, dict) and isinstance(v.get("rupas"), (int, float)):
+                result[planet] = {
+                    "rupas": round(float(v["rupas"]), 2),
+                    "strength_pct": round(float(v.get("percentage_strength", 0)), 1),
+                    "ishta": round(float(v.get("ishta_phala", 0)), 1),
+                    "kashta": round(float(v.get("kashta_phala", 0)), 1),
+                }
+    if len(result) < 7:
+        raise AstroApiError("shadbala: incomplete")
+    return result
+
+
 async def planet_signs(body: dict[str, Any]) -> dict[str, tuple[str, bool]]:
     """{planet: (sign, retrograde)} for the 9 grahas at the given moment."""
     result: dict[str, tuple[str, bool]] = {}

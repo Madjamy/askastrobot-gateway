@@ -1,22 +1,58 @@
 {
-  "_comment": "Charts added to get_birth_chart per query_type (agreed with the Owner, 18 Oct 2026). Edit freely: vargas D2-D60; extras: ashtakavarga, moon_chart. D9 and D10 always come with the n8n bundle.",
+  "_comment": "Charts added to get_birth_chart per query_type (agreed with the Owner, 18 Oct 2026). Edit freely: vargas D2-D60; extras: shadbala, moon_chart, ashtakavarga (available, not used). D9 and D10 always come with the n8n bundle.",
   "vargas": {
-    "general":   ["D9", "D10"],
-    "career":    ["D10", "D9"],
-    "finance":   ["D2", "D11"],
-    "marriage":  ["D9"],
-    "children":  ["D7", "D9"],
-    "siblings":  ["D3"],
-    "parents":   ["D12"],
-    "property":  ["D4", "D16"],
-    "education": ["D24"],
-    "health":    ["D6", "D30"],
-    "spiritual": ["D20", "D9"],
-    "past_life": ["D60", "D12", "D30"],
-    "travel":    [],
-    "legal":     []
+    "general": [
+      "D9",
+      "D10"
+    ],
+    "career": [
+      "D10",
+      "D9"
+    ],
+    "finance": [
+      "D2",
+      "D11"
+    ],
+    "marriage": [
+      "D9"
+    ],
+    "children": [
+      "D7",
+      "D9"
+    ],
+    "siblings": [
+      "D3"
+    ],
+    "parents": [
+      "D12"
+    ],
+    "property": [
+      "D4",
+      "D16"
+    ],
+    "education": [
+      "D24"
+    ],
+    "health": [
+      "D6",
+      "D30"
+    ],
+    "spiritual": [
+      "D20",
+      "D9"
+    ],
+    "past_life": [
+      "D60",
+      "D12",
+      "D30"
+    ],
+    "travel": [],
+    "legal": []
   },
   "extras": {
-    "general": ["ashtakavarga", "moon_chart"]
+    "general": [
+      "shadbala",
+      "moon_chart"
+    ]
   }
 }

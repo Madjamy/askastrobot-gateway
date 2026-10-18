@@ -84,3 +84,33 @@ def test_ingress_after_last_snapshot_is_found() -> None:
                                      start=date(2027, 1, 1), end=date(2027, 1, 31)))
     assert len(out["snapshots"]) == 1
     assert out["ingress"][0]["date"] == "2027-01-15" and out["ingress"][0]["planet"] == "Saturn"
+
+
+def test_shadbala_parsing(monkeypatch) -> None:
+    from app.mcp import astro_api
+
+    async def fake_post(endpoint, body):
+        assert endpoint == "shadbala/summary"
+        return {"Sun": {"Shadbala": 559.5, "rupas": 9.325, "percentage_strength": 186.501, "ishta_phala": 50.597,
+                        "kashta_phala": 9.378},
+                **{p: {"rupas": 6.0, "percentage_strength": 100.0, "ishta_phala": 1, "kashta_phala": 1}
+                   for p in ("Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn")}}
+    monkeypatch.setattr(astro_api, "_post", fake_post)
+    sb = asyncio.run(astro_api.shadbala({}))
+    assert sb["Sun"] == {"rupas": 9.32, "strength_pct": 186.5, "ishta": 50.6, "kashta": 9.4}
+
+
+def test_slow_shadbala_does_not_drop_vargas(monkeypatch) -> None:
+    from app.mcp import astro_api, enrich
+
+    async def slow(body):
+        await asyncio.sleep(5)
+    async def d7(chart, body):
+        return [{"name": n, "current_sign": 1, "house_number": 1} for n in
+                ["Ascendant", "Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]]
+    monkeypatch.setattr(astro_api, "shadbala", slow)
+    monkeypatch.setattr(astro_api, "varga", d7)
+    monkeypatch.setattr(enrich, "topics", lambda: {"vargas": {"general": ["D7"]}, "extras": {"general": ["shadbala"]}})
+    chart = {"Janam Kundali": {"lagna": {"sign": "Aries"}, "planets": {}}}
+    asyncio.run(enrich.add_topic_charts(chart, "general", {}, timeout=0.2))
+    assert chart["D7"]["Lagna"] == "Aries" and chart["unavailable_charts"] == ["Shadbala"]

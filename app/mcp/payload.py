@@ -36,6 +36,26 @@ _DEBILITATED = {"Sun": "Libra", "Moon": "Scorpio", "Mars": "Cancer", "Mercury": 
 
 MANGLIK_HOUSES = {1, 2, 4, 7, 8, 12}
 
+_BALADI = ("Bala", "Kumara", "Yuva", "Vriddha", "Mrita")       # 6° each, odd signs; reversed in even signs
+_TATVA = {0: "Fire (Agni)", 1: "Earth (Prithvi)", 2: "Air (Vayu)", 3: "Water (Jala)"}
+
+
+def baladi_avastha(sign: str, norm_degree: Any) -> str | None:
+    """Baladi avastha from the degree within the sign (odd signs Bala->Mrita, even signs reversed)."""
+    try:
+        d = float(norm_degree)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= d < 30:
+        return None
+    idx = min(int(d // 6), 4)
+    odd = SIGNS.index(sign) % 2 == 0          # Aries (1st sign) is odd
+    return _BALADI[idx] if odd else _BALADI[4 - idx]
+
+
+def tatva(sign: str) -> str:
+    return _TATVA[SIGNS.index(sign) % 4]
+
 _KUNDALI_KEYS = ("Janam Kundali", "Kundali")
 _ASPECTS_ID = "Planetary Drishti (Aspects)"
 _YOGA_ID = "Yoga Detection"
@@ -157,7 +177,12 @@ def build_planets(kundali: dict[str, Any], extended: dict[str, dict[str, Any]]) 
             "house": raw.get("house_number"),
             "nak": f"{nak}-{pada}" if nak and pada else nak,
             "flags": flags,
+            "tatva": tatva(sign),
         }
+        if name not in ("Rahu", "Ketu"):
+            avastha = baladi_avastha(sign, raw.get("normDegree"))
+            if avastha:
+                planets[name]["avastha"] = avastha
     return planets
 
 

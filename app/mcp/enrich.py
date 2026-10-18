@@ -2,8 +2,10 @@
 
 get_birth_chart returns the n8n bundle (D1, aspects, yogas, Shani status, dasha,
 gochar, D9, D10). This adds the divisional charts for the question's topic from
-the API, and for a general reading the Ashtakavarga and Moon chart. A chart the
-API can't supply is listed under `unavailable_charts` instead of failing the call.
+the API and, for a general reading, Shadbala (API) and the Moon chart.
+Ashtakavarga is available as an extra but not switched on (Owner, 18 Oct).
+Anything the API can't supply is listed under `unavailable_charts` instead of
+failing the call.
 """
 from __future__ import annotations
 
@@ -64,14 +66,38 @@ async def add_topic_charts(
 ) -> None:
     """Optional additions: never fails the main chart (bounded by `timeout`)."""
     cfg = topics()
-    wanted = [c for c in cfg["vargas"].get(query_type, []) if varga_label(c) not in chart]
-    if wanted:
-        got, missing = await fetch_vargas(wanted, body, timeout)
-        chart.update(got)
-        if missing:
-            chart["unavailable_charts"] = missing
-
     extras = cfg.get("extras", {}).get(query_type, [])
+    wanted = [c for c in cfg["vargas"].get(query_type, []) if varga_label(c) not in chart]
+    missing: list[str] = []
+
+    async def get_shadbala() -> dict[str, Any] | None:
+        try:
+            call = astro_api.shadbala(body)
+            return await (asyncio.wait_for(call, timeout) if timeout else call)
+        except Exception as exc:   # includes TimeoutError: optional block, never fails the chart
+            log.warning("enrich.shadbala_failed", error=type(exc).__name__)
+            return None
+
+    # Each job has its own timeout, so a slow one never discards the other's results.
+    vargas_task = fetch_vargas(wanted, body, timeout) if wanted else None
+    shadbala_task = get_shadbala() if "shadbala" in extras else None
+    jobs = [j for j in (vargas_task, shadbala_task) if j is not None]
+    if jobs:
+        results = await asyncio.gather(*jobs)
+        it = iter(results)
+        if vargas_task:
+            got, missing = next(it)
+            chart.update(got)
+        if shadbala_task:
+            sb = next(it)
+            if sb:
+                chart["Shadbala"] = {"unit": "rupas; strength_pct = % of the classical minimum (100+ = adequate)",
+                                     "planets": sb}
+            else:
+                missing.append("Shadbala")
+    if missing:
+        chart["unavailable_charts"] = missing
+
     kundali = chart.get("Janam Kundali") or {}
     planets = kundali.get("planets") or {}
     lagna = (kundali.get("lagna") or {}).get("sign")

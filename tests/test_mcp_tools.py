@@ -219,12 +219,24 @@ def test_dst_gap_rejected(state, live_client, monkeypatch) -> None:
     assert state["inserted"] == []
 
 
-def test_general_reading_adds_ashtakavarga_and_moon_chart(state, live_client) -> None:
-    res = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))
-    chart = res["structuredContent"]
-    assert chart["Ashtakavarga"]["SAV_total"] == 337
+def test_general_reading_adds_shadbala_and_moon_chart(state, live_client, monkeypatch) -> None:
+    import app.mcp.astro_api as api
+
+    async def sb(body):
+        return {p: {"rupas": 6.0, "strength_pct": 110.0, "ishta": 30.0, "kashta": 10.0}
+                for p in ("Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn")}
+    monkeypatch.setattr(api, "shadbala", sb)
+    chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))["structuredContent"]
+    assert chart["Shadbala"]["planets"]["Sun"]["rupas"] == 6.0
+    assert "Ashtakavarga" not in chart
     assert chart["Moon Chart (Chandra Lagna)"]["lagna"] == "Taurus"
     assert "unavailable_charts" not in chart          # D9/D10 already in the n8n bundle
+
+    async def down(body):
+        raise api.AstroApiError("down")
+    monkeypatch.setattr(api, "shadbala", down)
+    chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))["structuredContent"]
+    assert chart["unavailable_charts"] == ["Shadbala"] and "Janam Kundali" in chart
 
 
 def test_children_topic_adds_d7_or_reports_unavailable(state, live_client, monkeypatch) -> None:

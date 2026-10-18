@@ -102,3 +102,16 @@ def test_invalid_house_or_missing_degree_rejected() -> None:
         raw[0]["data"][0]["output"]["Venus"][key] = None
     with pytest.raises(PayloadError):
         compact_chart(raw, chart_type="natal")
+
+
+def test_avastha_and_tatva() -> None:
+    from app.mcp.payload import baladi_avastha, tatva
+    assert baladi_avastha("Aries", 3) == "Bala" and baladi_avastha("Aries", 29.9) == "Mrita"      # odd sign
+    assert baladi_avastha("Taurus", 3) == "Mrita" and baladi_avastha("Taurus", 29.9) == "Bala"    # even sign
+    assert baladi_avastha("Leo", 19.8) == "Vriddha" and baladi_avastha("Taurus", 19.6) == "Kumara"
+    assert tatva("Aries") == "Fire (Agni)" and tatva("Taurus") == "Earth (Prithvi)"
+    assert tatva("Gemini") == "Air (Vayu)" and tatva("Pisces") == "Water (Jala)"
+    out = compact_chart(_load("n8n_horoscope_sample.json"), chart_type="natal")
+    p = out["Janam Kundali"]["planets"]
+    assert p["Sun"]["avastha"] == "Mrita" and p["Moon"]["avastha"] == "Kumara" and p["Mars"]["avastha"] == "Vriddha"
+    assert "avastha" not in p["Rahu"] and p["Rahu"]["tatva"] == "Water (Jala)"
