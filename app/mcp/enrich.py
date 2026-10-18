@@ -66,7 +66,7 @@ async def add_topic_charts(
 ) -> None:
     """Optional additions: never fails the main chart (bounded by `timeout`)."""
     cfg = topics()
-    extras = cfg.get("extras", {}).get(query_type, [])
+    extras = set(cfg.get("extras", {}).get(query_type, [])) | set(cfg.get("extras", {}).get("_all", []))
     wanted = [c for c in cfg["vargas"].get(query_type, []) if varga_label(c) not in chart]
     missing: list[str] = []
 

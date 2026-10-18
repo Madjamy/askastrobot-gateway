@@ -43,16 +43,23 @@ QueryType = Literal[
 Varga = Literal["D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12",
                 "D16", "D20", "D24", "D27", "D30", "D40", "D45", "D60"]
 
-BirthDate = Annotated[str, Field(description="Date of birth, YYYY-MM-DD")]
-BirthTime = Annotated[str, Field(description="Local time of birth, 24-hour HH:MM")]
-BirthPlace = Annotated[str, Field(min_length=2, max_length=120,
-                                  description="City and country of birth, e.g. 'Delhi, India'")]
+_DATE_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$"
+_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+BirthDate = Annotated[str, Field(pattern=_DATE_PATTERN, examples=["1982-05-21"],
+                                 description="Date of birth as YYYY-MM-DD, e.g. 21 May 1982 -> 1982-05-21")]
+BirthTime = Annotated[str, Field(pattern=_TIME_PATTERN, examples=["12:38", "00:15", "21:05"],
+                                 description="Local clock time of birth, 24-hour HH:MM with two-digit hour, "
+                                             "e.g. 12:38 PM -> 12:38, 12:15 AM -> 00:15, 9:05 PM -> 21:05")]
+BirthPlace = Annotated[str, Field(min_length=2, max_length=120, examples=["Delhi, India"],
+                                  description="City and country of birth as 'City, Country', e.g. 'Delhi, India'. "
+                                              "No coordinates or time zone: the service finds them")]
+DateParam = Annotated[str, Field(pattern=_DATE_PATTERN, examples=["2027-01-31"], description="Date as YYYY-MM-DD")]
 
 _BACKEND_DEADLINE_SECONDS = 38.0
 _ENRICH_MAX_SECONDS = 10.0
 _UNAVAILABLE = "BACKEND_UNAVAILABLE: The chart could not be retrieved at the moment. Kindly try again later"
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
+_DATE_RE = re.compile(_DATE_PATTERN)  # same rules as the tool schema (a second line of defence)
+_TIME_RE = re.compile(_TIME_PATTERN)
 
 _PAID = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
 _FREE = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -285,8 +292,9 @@ def build_server() -> MCPServer:
         annotations=_PAID,
     )
     async def get_prashna_chart(
-        city_country: Annotated[str, Field(min_length=2, max_length=120,
-                                           description="User's current city and country, e.g. 'Point Cook, Australia'")],
+        city_country: Annotated[str, Field(min_length=2, max_length=120, examples=["Point Cook, Australia"],
+                                           description="User's current city and country as 'City, Country'. "
+                                                       "No date or time: the service uses the exact current moment there")],
         query_type: Annotated[QueryType, Field(description="Topic of the question")],
     ) -> dict[str, Any]:
         try:
@@ -312,7 +320,7 @@ def build_server() -> MCPServer:
         description=(
             "Fetch the Vedic birth chart for one question: D1 with house table, aspects, yogas, "
             "Sade Sati/Dhaiya/Kantak, Manglik, dashas, today's gochar, D9, D10, plus the divisional charts "
-            "for the topic (e.g. children D7, past_life D60/D12/D30). 'general' adds Ashtakavarga and the "
+            "for the topic (e.g. children D7, past_life D60/D12/D30). 'general' adds Shadbala and the "
             "Moon chart. Confirm birth details first. Call again for every new question (1 question "
             "from the user's plan)."
         ),
@@ -398,8 +406,8 @@ def build_server() -> MCPServer:
     )
     async def get_transits(
         birth_date: BirthDate, birth_time: BirthTime, birth_place: BirthPlace,
-        from_date: Annotated[str, Field(description="First date, YYYY-MM-DD")],
-        to_date: Annotated[str | None, Field(description="Last date, YYYY-MM-DD; omit for a single date")] = None,
+        from_date: Annotated[DateParam, Field(description="First date, YYYY-MM-DD")],
+        to_date: Annotated[DateParam | None, Field(description="Last date, YYYY-MM-DD; omit for a single date")] = None,
     ) -> dict[str, Any]:
         birth = await _resolve_birth(birth_date, birth_time, birth_place)
         try:

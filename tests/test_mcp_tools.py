@@ -230,6 +230,18 @@ def test_invalid_input(state, live_client) -> None:
     assert state["api_calls"] == []
 
 
+def test_input_formats_are_strict_and_uncharged(state, live_client) -> None:
+    r = live_client.post("/mcp", headers=HEADERS, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    tools = {t["name"]: t for t in r.json()["result"]["tools"]}
+    props = tools["get_birth_chart"]["inputSchema"]["properties"]
+    assert props["birth_date"]["pattern"] and props["birth_time"]["pattern"]
+    assert "pattern" in str(tools["get_transits"]["inputSchema"]["properties"]["from_date"])
+    for bad in ({"birth_time": "9:05"}, {"birth_time": "12:38 PM"}, {"birth_date": "21/05/1982"}):
+        res = _result(_call(live_client, "get_birth_chart", {**BIRTH, **bad}))
+        assert res["isError"] is True and next(iter(bad)) in res["content"][0]["text"]
+    assert state["api_calls"] == [] and state["inserted"] == []
+
+
 def test_gpt_token_rejected_at_mcp(state, live_client) -> None:
     client = live_client
     if True:
@@ -283,6 +295,12 @@ def test_general_reading_adds_shadbala_and_moon_chart(state, live_client, monkey
     monkeypatch.setattr(api, "shadbala", down)
     chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))["structuredContent"]
     assert chart["unavailable_charts"] == ["Shadbala"] and "Janam Kundali" in chart
+
+
+def test_every_topic_gets_the_moon_chart(state, live_client) -> None:
+    chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "career"}))["structuredContent"]
+    assert chart["Moon Chart (Chandra Lagna)"]["lagna"] == "Aries"
+    assert "Shadbala" not in chart                    # Shadbala (an API call) stays with 'general' only
 
 
 def test_children_topic_adds_d7_or_reports_unavailable(state, live_client, monkeypatch) -> None:

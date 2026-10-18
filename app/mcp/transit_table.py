@@ -242,7 +242,7 @@ def personal_gochar(table: Table, *, lagna: str, moon: str, natal_planets: dict[
         "data_until": table.days[-1].isoformat() if table.days else None,
         "as_of_utc": now.strftime("%Y-%m-%d %H:%M"),
         "houses": f"H = house from Lagna ({lagna}), M = house from Moon ({moon})",
-        "aspect_rules": "All planets aspect the 7th; Mars also 4th/8th; Jupiter and Rahu also 5th/9th; Saturn also 3rd/10th",
+        "aspect_rules": "Each planet aspects the 7th from itself; Mars also 4th/8th; Jupiter and Rahu also 5th/9th; Saturn also 3rd/10th; Ketu casts no aspect",
     }
     for planet in GRAHAS:
         lon, retro = table.position(planet, now)
@@ -303,7 +303,7 @@ def transits_window(table: Table, *, lagna: str, moon: str, natal_planets: dict[
         "status": "active",
         "period": f"{start.isoformat()} to {end.isoformat()}",
         "houses": f"H = house from Lagna ({lagna}), M = house from Moon ({moon})",
-        "aspect_rules": "All planets aspect the 7th; Mars also 4th/8th; Jupiter and Rahu also 5th/9th; Saturn also 3rd/10th",
+        "aspect_rules": "Each planet aspects the 7th from itself; Mars also 4th/8th; Jupiter and Rahu also 5th/9th; Saturn also 3rd/10th; Ketu casts no aspect",
     }
     planets = list(GRAHAS) if (end - start).days <= 10 else [p for p in GRAHAS if p != "Moon"]
     for planet in planets:
