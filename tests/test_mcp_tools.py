@@ -39,6 +39,8 @@ class FakeConn:
             return self.s["recent"]
         if "input_hash = $2" in sql:
             return self.s["duplicate"]
+        if "subject_hash = $2" in sql:
+            return self.s["follow_up"]
         if "gw_subscriptions" in sql:
             return self.s["sub"]
         if "was_paid_query = FALSE" in sql:
@@ -76,7 +78,7 @@ class FakePool:
 
 @pytest.fixture
 def state(monkeypatch):
-    s = {"recent": 0, "duplicate": None, "sub": None, "free_used": 0, "inserted": [], "n8n_bodies": [],
+    s = {"recent": 0, "duplicate": None, "follow_up": None, "sub": None, "free_used": 0, "inserted": [], "n8n_bodies": [],
          "released": [], "completed": [], "n8n_file": "n8n_horoscope_sample.json"}
     pool = FakePool(s)
     monkeypatch.setattr(srv, "get_pool", lambda: pool)
@@ -117,7 +119,7 @@ def test_tools_listed_with_annotations(state, live_client) -> None:
     if True:
         r = client.post("/mcp", headers=HEADERS, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         tools = {t["name"]: t for t in r.json()["result"]["tools"]}
-    assert set(tools) == {"get_prashna_chart", "get_birth_chart", "get_account"}
+    assert set(tools) == {"get_prashna_chart", "get_birth_chart", "get_divisional_chart", "get_transits", "get_account"}
     paid = tools["get_birth_chart"]["annotations"]
     assert paid["readOnlyHint"] is False and paid["destructiveHint"] is True and paid["openWorldHint"] is False
     assert tools["get_account"]["annotations"]["readOnlyHint"] is True
@@ -215,3 +217,74 @@ def test_dst_gap_rejected(state, live_client, monkeypatch) -> None:
                         {**BIRTH, "birth_date": "2026-10-04", "birth_time": "02:30"}))
     assert "INVALID_INPUT:" in res["content"][0]["text"]
     assert state["inserted"] == []
+
+
+def test_general_reading_adds_ashtakavarga_and_moon_chart(state, live_client) -> None:
+    res = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "general"}))
+    chart = res["structuredContent"]
+    assert chart["Ashtakavarga"]["SAV_total"] == 337
+    assert chart["Moon Chart (Chandra Lagna)"]["lagna"] == "Taurus"
+    assert "unavailable_charts" not in chart          # D9/D10 already in the n8n bundle
+
+
+def test_children_topic_adds_d7_or_reports_unavailable(state, live_client, monkeypatch) -> None:
+    import app.mcp.astro_api as api
+
+    async def no_key(chart, body):
+        raise api.AstroApiError("API key not configured")
+    monkeypatch.setattr(api, "varga", no_key)
+    chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "children"}))["structuredContent"]
+    assert chart["unavailable_charts"] == ["D7"]
+    assert chart["Janam Kundali"]["lagna"]["sign"] == "Libra"        # main chart still returned
+
+    async def d7(chart, body):
+        return [{"name": n, "current_sign": i + 1, "house_number": i + 1} for i, n in enumerate(
+            ["Ascendant", "Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"])]
+    monkeypatch.setattr(api, "varga", d7)
+    chart = _result(_call(live_client, "get_birth_chart", {**BIRTH, "query_type": "children"}))["structuredContent"]
+    assert chart["D7"]["Lagna"] == "Aries" and chart["D7"]["Sun"] == "Taurus (2)"
+
+
+def test_divisional_chart_follow_up_is_not_counted(state, live_client, monkeypatch) -> None:
+    import app.mcp.astro_api as api
+
+    async def d60(chart, body):
+        return [{"name": n, "current_sign": 5, "house_number": 1} for n in
+                ["Ascendant", "Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu"]]
+    monkeypatch.setattr(api, "varga", d60)
+    state["free_used"] = 3
+    state["follow_up"] = 1
+    res = _result(_call(live_client, "get_divisional_chart", {**{k: v for k, v in BIRTH.items() if k != "query_type"},
+                                                               "charts": ["D60"]}))
+    assert not res.get("isError"), res
+    assert res["structuredContent"]["charts"]["D60"]["Lagna"] == "Leo"
+    assert "no extra question" in res["structuredContent"]["account_note"]
+    assert state["inserted"][0][7] is True and state["inserted"][0][8]     # not counted; subject hash stored
+
+
+def test_divisional_chart_without_prior_question_needs_quota(state, live_client) -> None:
+    state["free_used"] = 3
+    res = _result(_call(live_client, "get_divisional_chart", {**{k: v for k, v in BIRTH.items() if k != "query_type"},
+                                                               "charts": ["D60"]}))
+    assert "INSUFFICIENT_CREDITS:" in res["content"][0]["text"]
+
+
+def test_transits_period(state, live_client, monkeypatch) -> None:
+    import app.mcp.astro_api as api
+
+    async def planets(body):
+        assert body["config"]["observation_point"] == "geocentric"
+        sat = "Pisces" if (body["month"], body["date"]) < (3, 10) else "Aries"
+        return {"Sun": ("Leo", False), "Moon": ("Libra", False), "Mars": ("Cancer", False),
+                "Mercury": ("Libra", False), "Jupiter": ("Cancer", False), "Venus": ("Libra", True),
+                "Saturn": (sat, False), "Rahu": ("Aquarius", False), "Ketu": ("Leo", False)}
+    monkeypatch.setattr(api, "planet_signs", planets)
+    args = {**{k: v for k, v in BIRTH.items() if k != "query_type"}, "from_date": "2027-01-01", "to_date": "2027-06-01"}
+    res = _result(_call(live_client, "get_transits", args))
+    out = res["structuredContent"]
+    assert len(out["snapshots"]) == 6
+    (ing,) = out["ingress"]
+    assert (ing["date"], ing["planet"], ing["enters"], ing["from_lagna"], ing["from_moon"]) == (
+        "2027-03-10", "Saturn", "Aries", 7, 12)
+    assert out["snapshots"][3]["sade_sathi"] == "Yes – 1st Phase"      # Saturn 12th from Taurus Moon
+    assert out["snapshots"][0]["planets"]["Saturn"] == "Pisces (6/11)"

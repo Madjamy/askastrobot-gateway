@@ -5,9 +5,12 @@ Order of checks for every chart tool call:
 2. Repeat protection: an identical call (same user, tool and inputs) inside
    `mcp_dedupe_seconds` is served again without using quota. Repeats are still
    logged (is_repeat = TRUE) so they count towards the rate limit.
-3. Active subscription for the tool's bot or 'all' (the existing gw_subscriptions,
+3. Follow-up: extra charts / transits for the SAME person within `mcp_followup_minutes`
+   of a counted birth-chart question are part of that question (Owner: only a new
+   question uses a free question). Logged with is_repeat = TRUE (not counted).
+4. Active subscription for the tool's bot or 'all' (the existing gw_subscriptions,
    written by the website's Stripe webhook) -> paid call.
-4. Otherwise the plugin's lifetime free quota (`mcp_free_queries`, counted over
+5. Otherwise the plugin's lifetime free quota (`mcp_free_queries`, counted over
    channel='mcp' rows only, so it is separate from the Custom GPT quota).
 
 The log row is inserted INSIDE the locked check (a reservation), so concurrent
@@ -31,10 +34,15 @@ from app.settings import get_settings
 @dataclass(frozen=True)
 class Decision:
     allowed: bool
-    reason: str            # 'subscription' | 'free' | 'duplicate' | 'quota_exhausted' | 'rate_limited'
+    reason: str            # 'subscription' | 'free' | 'duplicate' | 'follow_up' | 'quota_exhausted' | 'rate_limited'
     was_paid: bool = False
     free_left: int | None = None
     reservation_id: int | None = None   # gw_query_log.id reserved for this call
+
+
+def subject_hash(user_id: str, birth: dict[str, Any]) -> str:
+    """Keyed hash identifying the person (birth date/time/place) without storing it."""
+    return input_hash(user_id, "subject", birth)
 
 
 def input_hash(user_id: str, tool: str, inputs: dict[str, Any]) -> str:
@@ -45,6 +53,7 @@ def input_hash(user_id: str, tool: str, inputs: dict[str, Any]) -> str:
 
 async def reserve(
     *, user_id: str, email: str, bot_slug: str, tool_name: str, query_type: str | None, ihash: str,
+    subject: str | None = None, follow_up_ok: bool = False,
 ) -> Decision:
     settings = get_settings()
     pool = get_pool()
@@ -73,8 +82,24 @@ async def reserve(
                 """,
                 user_id, ihash, settings.mcp_dedupe_seconds,
             )
+            follow_up = False
+            if not duplicate and follow_up_ok and subject:
+                follow_up = bool(await conn.fetchval(
+                    """
+                    SELECT 1 FROM public.gw_query_log
+                     WHERE user_id = $1 AND channel = 'mcp' AND subject_hash = $2
+                       AND tool_name = 'get_birth_chart' AND is_repeat = FALSE
+                       AND n8n_response_ms IS NOT NULL   -- completed, not a pending reservation
+                       AND created_at > NOW() - make_interval(mins => $3)
+                     LIMIT 1
+                    """,
+                    user_id, subject, settings.mcp_followup_minutes,
+                ))
+
             if duplicate:
                 decision = Decision(True, "duplicate")
+            elif follow_up:
+                decision = Decision(True, "follow_up")
             elif await _active_subscription(conn, user_id, bot_slug):
                 decision = Decision(True, "subscription", was_paid=True)
             else:
@@ -88,12 +113,12 @@ async def reserve(
                 """
                 INSERT INTO public.gw_query_log
                     (user_id, email, bot_slug, query_text, query_type, birth_details_json,
-                     was_paid_query, channel, tool_name, input_hash, is_repeat)
-                VALUES ($1, $2, $3, NULL, $4, NULL, $5, 'mcp', $6, $7, $8)
+                     was_paid_query, channel, tool_name, input_hash, is_repeat, subject_hash)
+                VALUES ($1, $2, $3, NULL, $4, NULL, $5, 'mcp', $6, $7, $8, $9)
                 RETURNING id
                 """,
                 user_id, email, bot_slug, query_type, decision.was_paid, tool_name, ihash,
-                decision.reason == "duplicate",
+                decision.reason in ("duplicate", "follow_up"), subject,
             )
             return Decision(decision.allowed, decision.reason, decision.was_paid,
                             decision.free_left, reservation_id=row_id)
@@ -115,7 +140,15 @@ async def release(reservation_id: int) -> None:
         await conn.execute("DELETE FROM public.gw_query_log WHERE id = $1", reservation_id)
 
 
-async def account_summary(user_id: str) -> dict[str, Any]:
+def mask_email(email: str) -> str:
+    """'madhur@gmail.com' -> 'ma••••@gmail.com' (enough to recognise the account)."""
+    local, _, domain = (email or "").partition("@")
+    if not domain:
+        return ""
+    return f"{local[:2]}{'•' * max(2, len(local) - 2)}@{domain}"
+
+
+async def account_summary(user_id: str, email: str = "") -> dict[str, Any]:
     settings = get_settings()
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -129,6 +162,7 @@ async def account_summary(user_id: str) -> dict[str, Any]:
         )
         used = await _free_used(conn, user_id)
     summary: dict[str, Any] = {
+        "signed_in_as": mask_email(email),
         "free_questions_left": max(0, settings.mcp_free_queries - used),
         "active_plan": None,
         "account_page": f"{settings.app_base_url}/plans",

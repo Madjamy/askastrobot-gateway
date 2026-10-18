@@ -14,6 +14,7 @@ from app.gpt.proxy import router as gpt_router
 from app.health import router as health_router
 from app.logging_setup import configure_logging, get_logger
 from app.mcp.server import build_asgi_app, build_server
+from app.oauth.account_login import router as account_login_router
 from app.oauth.authorize import router as authorize_router
 from app.oauth.metadata import router as metadata_router
 from app.oauth.token import router as token_router
@@ -96,6 +97,7 @@ app.include_router(token_router)
 app.include_router(gpt_router)
 app.include_router(upgrade_router)
 app.include_router(metadata_router)
+app.include_router(account_login_router)
 
 # /mcp and /.well-known/oauth-protected-resource/mcp (served by the MCP SDK).
 app.mount("/", mcp_asgi_app)

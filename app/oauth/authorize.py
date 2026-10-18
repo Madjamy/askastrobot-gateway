@@ -122,6 +122,13 @@ async def oauth_authorize(request: Request):
             code_challenge, code_challenge_method, resource,
         )
 
+    if resource is not None:
+        # Plugin (MCP) clients sign in with their AskAstroBot website account
+        # (Google or email + password), see app/oauth/account_login.py.
+        next_url = "/oauth/login"
+    else:
+        next_url = None
+
     qs = urlencode({
         "client_id": settings.google_client_id,
         "redirect_uri": _google_redirect_uri(),
@@ -133,7 +140,7 @@ async def oauth_authorize(request: Request):
     })
     google_url = f"{GOOGLE_AUTHORIZE_URL}?{qs}"
 
-    response = RedirectResponse(url=google_url, status_code=302)
+    response = RedirectResponse(url=next_url or google_url, status_code=302)
     # CSRF binding: cookie holds signed state; callback must present matching cookie.
     response.set_cookie(
         key=_STATE_COOKIE_NAME,

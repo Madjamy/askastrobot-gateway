@@ -53,10 +53,21 @@ class Settings(BaseSettings):
     # Observability
     sentry_dsn: str = ""
 
+    # Website account system (Supabase Auth): the plugin signs users in with it.
+    # The anon key is the public (publishable) key, not a secret.
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+
+    # freeastrologyapi.com (extra divisional charts, chart images, transits)
+    freeastrology_api_key: str = ""
+    astro_api_concurrency: int = 3
+    astro_api_observation_point: Literal["topocentric", "geocentric"] = "topocentric"
+
     # MCP (ChatGPT plugin) endpoint
     mcp_free_queries: int = 3          # lifetime free chart calls per user across the plugin
     mcp_dedupe_seconds: int = 120      # identical repeat call within this window is not charged
     mcp_rate_limit_per_hour: int = 30  # chart calls per user per hour
+    mcp_followup_minutes: int = 60     # extra charts/transits for the same person = follow-up, not a new question
     geocoder_user_agent: str = "AskAstroBot/1.0 (+https://askastrobot.com/contact)"
 
     @property

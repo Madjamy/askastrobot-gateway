@@ -40,8 +40,8 @@ def test_natal_other_blocks() -> None:
     g = out["Current Transit / Gochar"]
     assert g["Saturn"] == {"sign": "Pisces", "from_lagna": 6, "from_moon": 11, "flags": ["R"]}
     assert g["Jupiter"] == {"sign": "Cancer", "from_lagna": 10, "from_moon": 3}
-    assert out["Navamsa (D9)"]["Lagna"] == "Gemini" and out["Navamsa (D9)"]["Saturn"] == "Scorpio"
-    assert out["D10"]["Rahu"] == "Sagittarius"
+    assert out["Navamsa (D9)"]["Lagna"] == "Gemini" and out["Navamsa (D9)"]["Saturn"] == "Scorpio (6)"
+    assert out["D10"]["Rahu"] == "Sagittarius (6)"
     assert "Uranus" not in json.dumps(out) and "Pluto" not in json.dumps(out)
     # Mars in Leo: 11th from Libra Lagna (no), 4th from Taurus Moon and Taurus Venus (yes).
     assert out["Manglik"] == {"from_lagna": False, "from_moon": True, "from_venus": True,

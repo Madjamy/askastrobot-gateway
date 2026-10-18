@@ -273,22 +273,44 @@ def _gochar(blocks: list[dict[str, Any]], lagna_sign: str, moon_sign: str | None
     return None
 
 
+def varga_compact(rows: Any) -> dict[str, str]:
+    """Varga rows ({"0": {"name", "current_sign", "house_number", "isRetro"}, ...} or a list)
+    -> {"Lagna": "Cancer", "Sun": "Pisces (9)", ...}: sign names, house in brackets."""
+    items = rows.values() if isinstance(rows, dict) else rows if isinstance(rows, list) else []
+    chart: dict[str, str] = {}
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        name = "Lagna" if row.get("name") == "Ascendant" else row.get("name")
+        sign = sign_name(row.get("current_sign"))
+        if not sign or not (name == "Lagna" or name in GRAHAS):
+            continue
+        house = row.get("house_number")
+        chart[name] = sign if name == "Lagna" or not isinstance(house, int) else f"{sign} ({house})"
+    return chart
+
+
 def _vargas(blocks: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     out: dict[str, dict[str, str]] = {}
     for b in blocks:
         label = _VARGA_IDS.get(b.get("Identifier", ""))
-        if not label or not isinstance(b.get("output"), dict):
-            continue
-        chart: dict[str, str] = {}
-        for row in b["output"].values():
-            if not isinstance(row, dict):
-                continue
-            name = "Lagna" if row.get("name") == "Ascendant" else row.get("name")
-            sign = sign_name(row.get("current_sign"))
-            if sign and (name == "Lagna" or name in GRAHAS):
-                chart[name] = sign
-        out[label] = chart
+        if label and isinstance(b.get("output"), dict):
+            out[label] = varga_compact(b["output"])
     return out
+
+
+def moon_chart(moon_sign: str, planets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Chandra Lagna chart: whole-sign houses counted from the natal Moon sign."""
+    start = SIGNS.index(moon_sign)
+    houses: dict[str, dict[str, Any]] = {}
+    for h in range(1, 13):
+        sign = SIGNS[(start + h - 1) % 12]
+        houses[str(h)] = {
+            "sign": sign,
+            "lord": SIGN_LORDS[sign],
+            "occupants": [p for p, d in planets.items() if d.get("sign") == sign],
+        }
+    return {"lagna": moon_sign, "houses": houses}
 
 
 # ------------------------------------------------------------- top level ---
